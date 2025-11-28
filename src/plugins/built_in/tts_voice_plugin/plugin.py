@@ -7,11 +7,12 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Dict, AsyncIterator, Optional
+import asyncio
 
 import toml
 import numpy as np
 import soundfile as sf
-from openai import OpenAI
+from openai import AsyncOpenAI  # Changed to async client
 
 from src.common.logger import get_logger
 from src.plugin_system import BasePlugin, ComponentInfo, register_plugin
@@ -344,18 +345,20 @@ class QwenOmniTTSModel:
             # 将PCM数据转换为WAV文件
             wav_bytes = self._pcm_to_wav_soundfile(pcm_data)
             
+            if wav_bytes is None:
+                logger.error("PCM到WAV转换失败，无法生成有效的WAV音频")
+                return None
+                
             return wav_bytes
+            
         except Exception as e:
             logger.error(f"Qwen Omni TTS 失败: {e}")
             logger.error(traceback.format_exc())
             return None
 
-    def _pcm_to_wav_soundfile(self, pcm_data: bytes, sample_rate: int = 24000, channels: int = 1) -> bytes:
+    def _pcm_to_wav_soundfile(self, pcm_data: bytes, sample_rate: int = 24000, channels: int = 1) -> Optional[bytes]:
         """使用soundfile将PCM数据转换为WAV文件"""
         try:
-            import io
-            import numpy as np
-            
             # 将PCM字节数据转换为numpy数组
             # 假设是16位有符号整数（这是最常见的PCM格式）
             audio_array = np.frombuffer(pcm_data, dtype=np.int16)
@@ -364,7 +367,7 @@ class QwenOmniTTSModel:
             wav_io = io.BytesIO()
             
             # 使用soundfile写入WAV格式
-            sf.write(wav_io, audio_array, sample_rate, format='WAV')
+            sf.write(wav_io, audio_array, sample_rate, format='WAV', subtype='PCM_16')
             
             # 获取WAV文件数据
             wav_bytes = wav_io.getvalue()
@@ -376,19 +379,21 @@ class QwenOmniTTSModel:
         except Exception as e:
             logger.error(f"使用soundfile转换PCM到WAV失败: {e}")
             logger.error(traceback.format_exc())
-            return pcm_data
+            return None  # 返回None而不是原始PCM数据
             
     async def _tts_stream(self, text: str, **kwargs) -> AsyncIterator[str]:
-        """使用大模型流式生成音频数据"""
+        """使用大模型流式生成音频数据（异步版本）"""
         try:
             logger.info(f"开始调用Qwen Omni API生成音频，文本: {text[:30]}{'...' if len(text) > 30 else ''}")
             
             prompt = f"复述这句话，不要输出其他内容，只输出'{text}'就好，不要输出其他内容，不要输出前后缀，不要输出'{text}'以外的内容，不要说：如果还有类似的需求或者想聊聊别的"
             logger.info(f"使用prompt: {prompt}")
             
-            client = OpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+            # 使用异步OpenAI客户端
+            client = AsyncOpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
             
-            completion = client.chat.completions.create(
+            # 使用异步流式调用
+            completion = await client.chat.completions.create(
                 model=self.config.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 modalities=["text", "audio"],
@@ -403,7 +408,8 @@ class QwenOmniTTSModel:
             audio_data_received = False
             total_audio_length = 0
             
-            for chunk in completion:
+            # 异步迭代流式响应
+            async for chunk in completion:
                 if hasattr(chunk, "choices") and chunk.choices:
                     delta = chunk.choices[0].delta
                 

@@ -143,10 +143,7 @@ class TTSService:
                     text = cut_text[:last_punc_pos + 1]
                 else:
                     last_comma_pos = max(cut_text.rfind(p) for p in "，、；,;")
-                    if last_comma_pos != -1:
-                        text = cut_text[:last_comma_pos + 1]
-                    else:
-                        text = cut_text
+                    text = cut_text[:last_comma_pos + 1] if last_comma_pos != -1 else cut_text
 
             return text.strip()
         except Exception as e:
