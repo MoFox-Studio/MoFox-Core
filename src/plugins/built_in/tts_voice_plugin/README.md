@@ -1,7 +1,7 @@
-# GPT-SoVITS 语音合成插件（多风格版）
+# GPT-SoVITS & Qwen Omni 语音合成插件（多引擎多风格版）
 
 ## 简介
-本插件基于 GPT-SoVITS，实现文本转语音（TTS）功能，支持多种语音风格和多语言（中文/英文/日文）。适用于需要将文本内容以语音形式发送的场景，如语音回复、朗读长文本、增强表达效果等。
+本插件支持 GPT-SoVITS 和 Qwen Omni 双引擎，实现文本转语音（TTS）功能，支持多种语音风格和多语言（中文/英文/日文/粤语/韩文）。适用于需要将文本内容以语音形式发送的场景，如语音回复、朗读长文本、增强表达效果等。
 (此版本适用于麦麦09x版)
 ## 功能特性
 - 支持多种语音风格（如默认、温柔等，可自定义扩展）
@@ -11,36 +11,8 @@
 - 关键词激活，灵活触发
 
 ## 安装与配置
-1. **拷贝插件文件夹**到你的插件目录下（如 `plugins/tts_voice_plugin/`）。
-2. **配置 `config.toml`**，参考下方配置示例：
+**拷贝插件文件夹**到你的插件目录下（如 `plugins/tts_voice_plugin/`）。
 
-```toml
-[plugin]
-enabled = true
-config_version = "1.0.0"
-
-[tts]
-timeout = 30
-max_text_length = 500
-server = "http://127.0.0.1:9880"
-
-[tts_styles.default]
-refer_wav = ""
-prompt_text = ""
-prompt_language = "zh"
-gpt_weights = ""
-sovits_weights = ""
-
-[tts_styles.gentle]
-refer_wav = ""
-prompt_text = ""
-prompt_language = "zh"
-gpt_weights = ""
-sovits_weights = ""
-```
-
-- `server`：TTS 服务后端地址（需部署 GPT-SoVITS 服务）
-- `tts_styles`：可自定义多种风格，每种风格可配置不同参考音频、文本、模型权重等
 
 ## 使用方法
 - 在聊天中输入关键词（如“语音”、“说话”、“朗读”、“voice”、“tts”等）即可触发语音合成功能

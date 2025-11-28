@@ -19,7 +19,7 @@ class TTSVoiceCommand(PlusCommand):
     """
 
     command_name: str = "tts"
-    command_description: str = "使用GPT-SoVITS将文本转换为语音并发送"
+    command_description: str = "使用GPT-SoVITS或Qwen Omni将文本转换为语音并发送"
     command_aliases: ClassVar[list[str]] = ["语音合成", "说"]
     command_usage = "/tts <要说的文本> [风格]"
 
@@ -41,8 +41,14 @@ class TTSVoiceCommand(PlusCommand):
             if not tts_service:
                 raise RuntimeError("TTSService 未注册或初始化失败")
 
-            # 获取可用风格列表
-            available_styles = tts_service.tts_styles.keys()
+            # 获取可用风格列表 - 兼容不同的 TTS 服务类型
+            available_styles = []
+            if hasattr(tts_service, 'tts_styles'):
+                # GPT-SoVITS 服务
+                available_styles = list(tts_service.tts_styles.keys())
+            else:
+                # Qwen Omni 服务 - 使用默认风格
+                available_styles = ["default"]
 
             text_to_speak = ""
             style_hint = "default"

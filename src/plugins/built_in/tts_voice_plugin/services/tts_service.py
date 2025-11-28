@@ -6,6 +6,7 @@ import base64
 import io
 import os
 import re
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -20,7 +21,7 @@ logger = get_logger("tts_voice_plugin.service")
 
 
 class TTSService:
-    """封装了TTS合成的核心逻辑"""
+    """GPT-SoVITS TTS 服务"""
 
     def __init__(self, get_config_func: Callable[[str, Any], Any]):
         self.get_config = get_config_func
@@ -37,11 +38,11 @@ class TTSService:
             self.tts_styles = self._load_tts_styles()
 
             if self.tts_styles:
-                logger.info(f"TTS服务已成功加载风格: {list(self.tts_styles.keys())}")
+                logger.info(f"GPT-SoVITS服务已成功加载风格: {list(self.tts_styles.keys())}")
             else:
                 logger.warning("TTS风格配置为空，请检查配置文件")
         except Exception as e:
-            logger.error(f"TTS服务配置加载失败: {e}")
+            logger.error(f"GPT-SoVITS服务配置加载失败: {e}")
 
     def _load_tts_styles(self) -> dict[str, dict[str, Any]]:
         """加载 TTS 风格配置"""
@@ -112,6 +113,9 @@ class TTSService:
         # 默认回退到中文
         logger.info(f"在 {mode} 模式下未检测到特定语言，默认回退到: zh")
         return "zh"
+        except Exception as e:
+            logger.error(f"语言检测失败: {e}")
+            return "zh"
 
     def _clean_text_for_tts(self, text: str) -> str:
         # 1. 基本清理
@@ -148,6 +152,9 @@ class TTSService:
                     text = cut_text
 
         return text.strip()
+        except Exception as e:
+            logger.error(f"文本清理失败: {e}")
+            return text
 
     async def _call_tts_api(self, server_config: dict, text: str, text_language: str, **kwargs) -> bytes | None:
         """
@@ -204,7 +211,7 @@ class TTSService:
 
             # --- 步骤三：发送最终的合成请求 ---
             tts_url = base_url if base_url.endswith("/tts") else f"{base_url}/tts"
-            logger.info(f"发送到 TTS API 的数据: {data}")
+            logger.info(f"发送到 GPT-SoVITS API 的数据: {data}")
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(tts_url, json=data, timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
@@ -212,13 +219,13 @@ class TTSService:
                         return await response.read()
                     else:
                         error_info = await response.text()
-                        logger.error(f"TTS API调用失败: {response.status} - {error_info}")
+                        logger.error(f"GPT-SoVITS API调用失败: {response.status} - {error_info}")
                         return None
         except asyncio.TimeoutError:
-            logger.error("TTS服务请求超时")
+            logger.error("GPT-SoVITS服务请求超时")
             return None
         except Exception as e:
-            logger.error(f"TTS API调用异常: {e}")
+            logger.error(f"GPT-SoVITS API调用异常: {e}")
             return None
 
     async def _apply_spatial_audio_effect(self, audio_data: bytes) -> bytes | None:
@@ -317,9 +324,9 @@ class TTSService:
             final_language = self._determine_final_language(clean_text, language_policy)
             logger.info(f"决策模型未指定语言，使用策略 '{language_policy}' -> 最终语言: {final_language}")
 
-        logger.info(f"开始TTS语音合成，文本：{clean_text[:50]}..., 风格：{style}, 最终语言: {final_language}")
+            logger.info(f"开始GPT-SoVITS语音合成，文本：{clean_text[:50]}..., 风格：{style}, 最终语言: {final_language}")
 
-        audio_data = await self._call_tts_api(
+            audio_data = await self._call_gpt_sovits_api(
             server_config=server_config, text=clean_text, text_language=final_language,
             refer_wav_path=server_config.get("refer_wav_path"),
             prompt_text=server_config.get("prompt_text"),

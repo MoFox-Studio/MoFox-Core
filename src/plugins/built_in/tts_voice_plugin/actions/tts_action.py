@@ -4,6 +4,7 @@ TTS 语音合成 Action
 
 from pathlib import Path
 from typing import ClassVar
+import traceback
 
 import toml
 
@@ -19,22 +20,46 @@ logger = get_logger("tts_voice_plugin.action")
 def _get_available_styles() -> list[str]:
     """动态读取配置文件，获取所有可用的TTS风格名称"""
     try:
-        # 这个路径构建逻辑是为了确保无论从哪里启动，都能准确定位到配置文件
+        # 使用更稳健的路径构建方法
         plugin_file = Path(__file__).resolve()
-        # Bot/src/plugins/built_in/tts_voice_plugin/actions -> Bot
-        bot_root = plugin_file.parent.parent.parent.parent.parent.parent
-        config_file = bot_root / "config" / "plugins" / "tts_voice_plugin" / "config.toml"
-
-        if not config_file.is_file():
-            logger.warning("在 tts_action 中未找到 tts_voice_plugin 的配置文件，无法动态加载风格列表。")
+        # 计算插件根目录: Bot/src/plugins/built_in/tts_voice_plugin/actions -> Bot/src/plugins/built_in/tts_voice_plugin
+        plugin_root = plugin_file.parent.parent
+        
+        # 尝试多种可能的配置路径
+        possible_paths = [
+            # 标准路径: Bot/config/plugins/tts_voice_plugin/config.toml
+            plugin_root.parent.parent.parent.parent / "config" / "plugins" / "tts_voice_plugin" / "config.toml",
+            # 备用路径: Bot/config/plugins/tts_voice_plugin/config.toml
+            plugin_root.parent.parent.parent / "config" / "plugins" / "tts_voice_plugin" / "config.toml",
+            # 开发路径: 直接在插件目录下的 config.toml
+            plugin_root / "config.toml"
+        ]
+        
+        config_file = None
+        for path in possible_paths:
+            if path.is_file():
+                config_file = path
+                break
+        
+        if not config_file or not config_file.is_file():
+            logger.warning("配置文件不存在，使用默认风格列表")
             return ["default"]
 
         config = toml.loads(config_file.read_text(encoding="utf-8"))
 
-        styles_config = config.get("tts_styles", [])
+        # 检查当前使用的 TTS 引擎
+        engine = config.get("tts", {}).get("engine", "gpt-sovits")
         if not isinstance(styles_config, list):
-
+        
+        if engine == "qwen-omni":
+            # Qwen Omni 使用默认风格
             return ["default"]
+        else:
+            # GPT-SoVITS 从配置中读取风格
+            styles_config = config.get("tts_styles", [])
+            if not isinstance(styles_config, list):
+                logger.warning(f"tts_styles 配置不是列表类型: {type(styles_config)}")
+                return ["default"]
 
         # 使用显式循环和类型检查来提取 style_name，以确保 Pylance 类型检查通过
         style_names: list[str] = []
@@ -119,7 +144,7 @@ class TTSVoiceAction(BaseAction):
         """
         判断此 Action 是否应该被激活。
         满足以下任一条件即可激活：
-        1. 55% 的随机概率
+        1. 25% 的随机概率
         2. 匹配到预设的关键词
         3. LLM 判断当前场景适合发送语音
         """
@@ -147,6 +172,9 @@ class TTSVoiceAction(BaseAction):
 
         logger.debug(f"{self.log_prefix} 所有激活条件均未满足，不激活")
         return False
+        except Exception as e:
+            logger.error(f"{self.log_prefix} 激活判断失败: {e}")
+            return False
 
     async def execute(self) -> tuple[bool, str]:
         """
