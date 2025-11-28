@@ -49,7 +49,6 @@ def _get_available_styles() -> list[str]:
 
         # 检查当前使用的 TTS 引擎
         engine = config.get("tts", {}).get("engine", "gpt-sovits")
-        if not isinstance(styles_config, list):
         
         if engine == "qwen-omni":
             # Qwen Omni 使用默认风格
@@ -126,7 +125,7 @@ class TTSVoiceAction(BaseAction):
 
     action_require: ClassVar[list] = [
         "在调用此动作时，你必须在 'text' 参数中提供要合成语音的完整回复内容。这是强制性的。",
-        "当用户明确请求使用语音进行回复时，例如‘发个语音听听’、‘用语音说’等。",
+        "当用户明确请求使用语音进行回复时，例如'发个语音听听'、'用语音说'等。",
         "当对话内容适合用语音表达，例如讲故事、念诗、撒嬌或进行角色扮演时。",
         "在表达特殊情感（如安慰、鼓励、庆祝）的场景下，可以主动使用语音来增强感染力。",
         "不要在日常的、简短的问答或闲聊中频繁使用语音，避免打扰用户。",
@@ -172,9 +171,6 @@ class TTSVoiceAction(BaseAction):
 
         logger.debug(f"{self.log_prefix} 所有激活条件均未满足，不激活")
         return False
-        except Exception as e:
-            logger.error(f"{self.log_prefix} 激活判断失败: {e}")
-            return False
 
     async def execute(self) -> tuple[bool, str]:
         """
@@ -230,4 +226,3 @@ class TTSVoiceAction(BaseAction):
                 action_done=False
             )
             return False, f"语音合成出错: {e!s}"
-

@@ -8,7 +8,7 @@ import os
 import re
 import traceback
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 import soundfile as sf
@@ -69,12 +69,10 @@ class TTSService:
 
         for style_cfg in tts_styles_config:
             if not isinstance(style_cfg, dict):
-
                 continue
 
             style_name = style_cfg.get("style_name")
             if not style_name:
-
                 continue
 
             styles[style_name] = {
@@ -113,45 +111,44 @@ class TTSService:
         # 默认回退到中文
         logger.info(f"在 {mode} 模式下未检测到特定语言，默认回退到: zh")
         return "zh"
-        except Exception as e:
-            logger.error(f"语言检测失败: {e}")
-            return "zh"
-
+        
     def _clean_text_for_tts(self, text: str) -> str:
-        # 1. 基本清理
-        text = re.sub(r"[\(（\[【].*?[\)）\]】]", "", text)
-        text = re.sub(r"([，。！？、；：,.!?;:~\-`])\1+", r"\1", text)
-        text = re.sub(r"~{2,}|～{2,}", "，", text)
-        text = re.sub(r"\.{3,}|…{1,}", "。", text)
+        """清理文本，使其适合TTS合成"""
+        try:
+            # 1. 基本清理
+            text = re.sub(r"[\(（\[【].*?[\)）\]】]", "", text)
+            text = re.sub(r"([，。！？、；：,.!?;:~\-`])\1+", r"\1", text)
+            text = re.sub(r"~{2,}|～{2,}", "，", text)
+            text = re.sub(r"\.{3,}|…{1,}", "。", text)
 
-        # 2. 词语替换
-        replacements = {"www": "哈哈哈", "hhh": "哈哈", "233": "哈哈", "666": "厉害", "88": "拜拜"}
-        for old, new in replacements.items():
-            text = text.replace(old, new)
+            # 2. 词语替换
+            replacements = {"www": "哈哈哈", "hhh": "哈哈", "233": "哈哈", "666": "厉害", "88": "拜拜"}
+            for old, new in replacements.items():
+                text = text.replace(old, new)
 
-        # 3. 移除不必要的字符 (恢复使用更安全的原版正则，避免误删)
-        text = re.sub(r"[^\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffa-zA-Z0-9\s，。！？、；：,.!?;:~～]", "", text)
+            # 3. 移除不必要的字符 (恢复使用更安全的原版正则，避免误删)
+            text = re.sub(r"[^\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffa-zA-Z0-9\s，。！？、；：,.!?;:~～]", "", text)
 
-        # 4. 确保结尾有标点
-        if text and not text.endswith(tuple("，。！？、；：,.!?;:")):
-            text += "。"
+            # 4. 确保结尾有标点
+            if text and not text.endswith(tuple("，。！？、；：,.!?;:")):
+                text += "。"
 
-        # 5. 智能截断 (保留改进的截断逻辑)
-        if len(text) > self.max_text_length:
-            cut_text = text[:self.max_text_length]
-            punctuation = "。！？.…"
-            last_punc_pos = max(cut_text.rfind(p) for p in punctuation)
+            # 5. 智能截断 (保留改进的截断逻辑)
+            if len(text) > self.max_text_length:
+                cut_text = text[:self.max_text_length]
+                punctuation = "。！？.…"
+                last_punc_pos = max(cut_text.rfind(p) for p in punctuation)
 
-            if last_punc_pos != -1:
-                text = cut_text[:last_punc_pos + 1]
-            else:
-                last_comma_pos = max(cut_text.rfind(p) for p in "，、；,;")
-                if last_comma_pos != -1:
-                    text = cut_text[:last_comma_pos + 1]
+                if last_punc_pos != -1:
+                    text = cut_text[:last_punc_pos + 1]
                 else:
-                    text = cut_text
+                    last_comma_pos = max(cut_text.rfind(p) for p in "，、；,;")
+                    if last_comma_pos != -1:
+                        text = cut_text[:last_comma_pos + 1]
+                    else:
+                        text = cut_text
 
-        return text.strip()
+            return text.strip()
         except Exception as e:
             logger.error(f"文本清理失败: {e}")
             return text
@@ -170,7 +167,6 @@ class TTSService:
             # --- 步骤一：像稳定版一样，先切换模型 ---
             async def switch_model_weights(weights_path: str | None, weight_type: str):
                 if not weights_path:
-
                     return
                 api_endpoint = f"/set_{weight_type}_weights"
                 switch_url = f"{base_url}{api_endpoint}"
@@ -217,10 +213,9 @@ class TTSService:
                 async with session.post(tts_url, json=data, timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:
                     if response.status == 200:
                         return await response.read()
-                    else:
-                        error_info = await response.text()
-                        logger.error(f"GPT-SoVITS API调用失败: {response.status} - {error_info}")
-                        return None
+                    error_info = await response.text()
+                    logger.error(f"GPT-SoVITS API调用失败: {response.status} - {error_info}")
+                    return None
         except asyncio.TimeoutError:
             logger.error("GPT-SoVITS服务请求超时")
             return None
@@ -233,7 +228,6 @@ class TTSService:
         try:
             effects_config = self.get_config("spatial_effects", {})
             if not effects_config.get("enabled", False):
-
                 return audio_data
 
             # 获取插件目录和IR文件路径
@@ -265,8 +259,6 @@ class TTSService:
                 logger.warning(f"卷积混响已启用，但IR文件不存在 ({ir_path})，跳过该效果。")
 
             if not effects:
-
-
                 return audio_data
 
             # 将原始音频数据加载到内存中的 AudioFile 对象
@@ -310,7 +302,6 @@ class TTSService:
         server_config = self.tts_styles[style]
         clean_text = self._clean_text_for_tts(text)
         if not clean_text:
-
             return None
 
         # 语言决策流程：
@@ -324,9 +315,9 @@ class TTSService:
             final_language = self._determine_final_language(clean_text, language_policy)
             logger.info(f"决策模型未指定语言，使用策略 '{language_policy}' -> 最终语言: {final_language}")
 
-            logger.info(f"开始GPT-SoVITS语音合成，文本：{clean_text[:50]}..., 风格：{style}, 最终语言: {final_language}")
+        logger.info(f"开始GPT-SoVITS语音合成，文本：{clean_text[:50]}..., 风格：{style}, 最终语言: {final_language}")
 
-            audio_data = await self._call_gpt_sovits_api(
+        audio_data = await self._call_tts_api(
             server_config=server_config, text=clean_text, text_language=final_language,
             refer_wav_path=server_config.get("refer_wav_path"),
             prompt_text=server_config.get("prompt_text"),
