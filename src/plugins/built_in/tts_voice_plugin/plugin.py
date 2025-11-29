@@ -30,16 +30,17 @@ logger = get_logger("tts_voice_plugin")
 @register_plugin
 class TTSVoicePlugin(BasePlugin):
     """
-    GPT-SoVITS 和 Qwen Omni 语音合成插件
+    GPT-SoVITS 和 Qwen Omni 语音合成插件  
     """
 
     plugin_name = "tts_voice_plugin"
-    plugin_description = "基于GPT-SoVITS的文本转语音插件（重构版）"
+    plugin_description = "基于GPT-SoVITS和Qwen Omni的文本转语音插件"
     plugin_version = "3.2.0"
     plugin_author = "Kilo Code & 靚仔"
     enable_plugin = True
     config_file_name = "config.toml"
     dependencies: ClassVar[list[str]] = []
+
 
     permission_nodes: ClassVar[list[PermissionNodeField]] = [
         PermissionNodeField(node_name="command.use", description="是否可以使用 /tts 命令"),
@@ -230,6 +231,12 @@ convolution_mix = 0.7
         """
         try:
             logger.info("开始初始化 TTSVoicePlugin...")
+            
+            # 确保配置文件存在 - 新增这行
+            plugin_file = Path(__file__).resolve()
+            bot_root = plugin_file.parent.parent.parent.parent.parent
+            config_file = bot_root / "config" / "plugins" / self.plugin_name / self.config_file_name
+            self._create_default_config(config_file)
 
             # 获取当前使用的TTS引擎
             engine = self._get_config_wrapper("tts.engine", "gpt-sovits")
@@ -240,7 +247,7 @@ convolution_mix = 0.7
                 logger.info("初始化 GPT-SoVITS 服务...")
                 self.tts_service = TTSService(self._get_config_wrapper)
                 register_service("tts", self.tts_service)
-                logger.info("GPT-SoVITS TTSService 已成功初始化并注册。")
+                logger.info("GPT-SoVITS TTS服务已成功初始化并注册。")  # 更新日志
             
             elif engine == "qwen-omni":
                 # 检查API Key
@@ -254,7 +261,7 @@ convolution_mix = 0.7
                     logger.info("初始化 Qwen Omni 服务...")
                     self.tts_service = QwenOmniTTSModel(self._get_config_wrapper)
                     register_service("tts", self.tts_service)
-                    logger.info("Qwen Omni TTSModel 已成功初始化并注册。")
+                    logger.info("Qwen Omni TTS服务已成功初始化并注册。")  # 更新日志
             else:
                 logger.error(f"不支持的 TTS 引擎: {engine}")
                 self.tts_service = None

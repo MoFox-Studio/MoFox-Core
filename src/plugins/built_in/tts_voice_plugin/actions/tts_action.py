@@ -205,14 +205,14 @@ class TTSVoiceAction(BaseAction):
                 # 在发送语音前，将文本注册到缓存中
                 register_self_voice(audio_b64, text)
                 await self.send_custom(message_type="voice", content=audio_b64)
-                logger.info(f"{self.log_prefix} GPT-SoVITS语音发送成功")
+                logger.info(f"{self.log_prefix} TTS语音发送成功")  # 更新日志
                 await self.store_action_info(
                     action_prompt_display=f"将文本转换为语音并发送 (风格:{voice_style})",
                     action_done=True
                 )
                 return True, f"成功生成并发送语音，文本长度: {len(text)}字符"
             else:
-                logger.error(f"{self.log_prefix} TTS服务未能返回音频数据，静默处理。")
+                logger.error(f"{self.log_prefix} TTS服务未能返回音频数据，静默处理。")  # 更新日志
                 await self.store_action_info(
                     action_prompt_display="语音合成失败: TTS服务未能返回音频数据",
                     action_done=False

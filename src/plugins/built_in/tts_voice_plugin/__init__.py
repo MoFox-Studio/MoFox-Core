@@ -1,7 +1,7 @@
 from src.plugin_system.base.plugin_metadata import PluginMetadata
 
 __plugin_meta__ = PluginMetadata(
-    name="GPT-SoVITS 语音合成插件",
+    name="GPT-SoVITS & Qwen Omni 语音合成插件",  # 更新名称
     description="基于 GPT-SoVITS 和 Qwen Omni 的文本转语音插件，支持多种语言和多风格语音合成。",
     usage=" ",
     version="3.2.0",
