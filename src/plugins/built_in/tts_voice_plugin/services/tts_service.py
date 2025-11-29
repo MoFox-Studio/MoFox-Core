@@ -20,6 +20,47 @@ from src.common.logger import get_logger
 logger = get_logger("tts_voice_plugin.service")
 
 
+def clean_text_for_tts(text: str, max_text_length: int = 500) -> str:
+    """
+    清理文本，使其适合TTS合成
+    """
+    try:
+        # 1. 基本清理
+        text = re.sub(r"[\(（\[【].*?[\)）\]】]", "", text)
+        text = re.sub(r"([，。！？、；：,.!?;:~\-`])\1+", r"\1", text)
+        text = re.sub(r"~{2,}|～{2,}", "，", text)
+        text = re.sub(r"\.{3,}|…{1,}", "。", text)
+
+        # 2. 词语替换
+        replacements = {"www": "哈哈哈", "hhh": "哈哈", "233": "哈哈", "666": "厉害", "88": "拜拜"}
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        # 3. 移除不必要的字符 (恢复使用更安全的原版正则，避免误删)
+        text = re.sub(r"[^\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffa-zA-Z0-9\s，。！？、；：,.!?;:~～]", "", text)
+
+        # 4. 确保结尾有标点
+        if text and not text.endswith(tuple("，。！？、；：,.!?;:")):
+            text += "。"
+
+        # 5. 智能截断 (保留改进的截断逻辑)
+        if len(text) > max_text_length:
+            cut_text = text[:max_text_length]
+            punctuation = "。！？.…"
+            last_punc_pos = max(cut_text.rfind(p) for p in punctuation)
+
+            if last_punc_pos != -1:
+                text = cut_text[:last_punc_pos + 1]
+            else:
+                last_comma_pos = max(cut_text.rfind(p) for p in "，、；,;")
+                text = cut_text[:last_comma_pos + 1] if last_comma_pos != -1 else cut_text
+
+        return text.strip()
+    except Exception as e:
+        logger.error(f"文本清理失败: {e}")
+        return text
+
+
 class TTSService:
     """GPT-SoVITS TTS 服务"""
 
@@ -43,6 +84,11 @@ class TTSService:
                 logger.warning("TTS风格配置为空，请检查配置文件")
         except Exception as e:
             logger.error(f"GPT-SoVITS服务配置加载失败: {e}")
+
+    def _clean_text_for_tts(self, text: str) -> str:
+        """TTSService 内部的文本清理方法，复用公共函数"""
+        return clean_text_for_tts(text, self.max_text_length)
+
 
     def _load_tts_styles(self) -> dict[str, dict[str, Any]]:
         """加载 TTS 风格配置"""
@@ -112,43 +158,6 @@ class TTSService:
         logger.info(f"在 {mode} 模式下未检测到特定语言，默认回退到: zh")
         return "zh"
         
-    def _clean_text_for_tts(self, text: str) -> str:
-        """清理文本，使其适合TTS合成"""
-        try:
-            # 1. 基本清理
-            text = re.sub(r"[\(（\[【].*?[\)）\]】]", "", text)
-            text = re.sub(r"([，。！？、；：,.!?;:~\-`])\1+", r"\1", text)
-            text = re.sub(r"~{2,}|～{2,}", "，", text)
-            text = re.sub(r"\.{3,}|…{1,}", "。", text)
-
-            # 2. 词语替换
-            replacements = {"www": "哈哈哈", "hhh": "哈哈", "233": "哈哈", "666": "厉害", "88": "拜拜"}
-            for old, new in replacements.items():
-                text = text.replace(old, new)
-
-            # 3. 移除不必要的字符 (恢复使用更安全的原版正则，避免误删)
-            text = re.sub(r"[^\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffa-zA-Z0-9\s，。！？、；：,.!?;:~～]", "", text)
-
-            # 4. 确保结尾有标点
-            if text and not text.endswith(tuple("，。！？、；：,.!?;:")):
-                text += "。"
-
-            # 5. 智能截断 (保留改进的截断逻辑)
-            if len(text) > self.max_text_length:
-                cut_text = text[:self.max_text_length]
-                punctuation = "。！？.…"
-                last_punc_pos = max(cut_text.rfind(p) for p in punctuation)
-
-                if last_punc_pos != -1:
-                    text = cut_text[:last_punc_pos + 1]
-                else:
-                    last_comma_pos = max(cut_text.rfind(p) for p in "，、；,;")
-                    text = cut_text[:last_comma_pos + 1] if last_comma_pos != -1 else cut_text
-
-            return text.strip()
-        except Exception as e:
-            logger.error(f"文本清理失败: {e}")
-            return text
 
     async def _call_tts_api(self, server_config: dict, text: str, text_language: str, **kwargs) -> bytes | None:
         """

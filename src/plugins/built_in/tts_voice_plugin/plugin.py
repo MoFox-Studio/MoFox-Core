@@ -22,9 +22,10 @@ from src.plugin_system.base.config_types import ConfigField
 from .actions.tts_action import TTSVoiceAction
 from .commands.tts_command import TTSVoiceCommand
 from .services.manager import register_service
-from .services.tts_service import TTSService
+from .services.tts_service import TTSService, clean_text_for_tts
 
 logger = get_logger("tts_voice_plugin")
+
 
 
 @register_plugin
@@ -232,7 +233,7 @@ convolution_mix = 0.7
         try:
             logger.info("开始初始化 TTSVoicePlugin...")
             
-            # 确保配置文件存在 - 新增这行
+            # 确保配置文件存在
             plugin_file = Path(__file__).resolve()
             bot_root = plugin_file.parent.parent.parent.parent.parent
             config_file = bot_root / "config" / "plugins" / self.plugin_name / self.config_file_name
@@ -247,24 +248,28 @@ convolution_mix = 0.7
                 logger.info("初始化 GPT-SoVITS 服务...")
                 self.tts_service = TTSService(self._get_config_wrapper)
                 register_service("tts", self.tts_service)
-                logger.info("GPT-SoVITS TTS服务已成功初始化并注册。")  # 更新日志
+                logger.info("GPT-SoVITS TTS服务已成功初始化并注册。")
             
             elif engine == "qwen-omni":
                 # 检查API Key
                 api_key = self._get_config_wrapper("qwen_omni.api_key", "")
                 if not api_key or api_key == "your-api-key-here":
-                    logger.error("Qwen Omni 需要配置有效的 API Key，请在插件配置中设置 qwen_omni.api_key")
-                    # 创建空服务，避免后续调用出错
+                    logger.error("Qwen Omni 需要配置有效的 API Key，但当前配置为空或为默认值。")
+                    logger.error("TTS 功能将被禁用，请检查插件配置中的 qwen_omni.api_key 设置。")
+                    # 创建空服务，明确禁用TTS功能
                     self.tts_service = None
+                    # 仍然注册一个空服务，但后续调用会明确失败
+                    register_service("tts", None)
                 else:
                     # 实例化 Qwen Omni 服务
                     logger.info("初始化 Qwen Omni 服务...")
                     self.tts_service = QwenOmniTTSModel(self._get_config_wrapper)
                     register_service("tts", self.tts_service)
-                    logger.info("Qwen Omni TTS服务已成功初始化并注册。")  # 更新日志
+                    logger.info("Qwen Omni TTS服务已成功初始化并注册。")
             else:
                 logger.error(f"不支持的 TTS 引擎: {engine}")
                 self.tts_service = None
+                register_service("tts", None)
 
             logger.info("TTSVoicePlugin 初始化完成")
 
@@ -316,6 +321,7 @@ class QwenOmniTTSModel:
         """
         self.get_config = get_config_func
         self.config = self._load_config()
+        self.max_text_length = self.get_config("tts.max_text_length", 500)  # 获取最大文本长度
 
     def _load_config(self) -> QwenOmniConfig:
         """从插件配置加载Qwen Omni配置"""
@@ -335,17 +341,19 @@ class QwenOmniTTSModel:
     async def tts(self, text: str, **kwargs) -> Optional[bytes]:
         """文本转语音 - 将PCM数据转换为WAV文件"""
         try:
-            audio_base64_string = ""
-            chunk_count = 0
+            # 使用列表收集数据块，避免O(n²)性能问题
+            chunks = []
             
             async for chunk in self._tts_stream(text, **kwargs):
-                audio_base64_string += chunk
-                chunk_count += 1
+                chunks.append(chunk)
                 
-            if not audio_base64_string:
+            if not chunks:
                 logger.error("没有收到任何音频数据")
                 return None
                 
+            # 使用join连接所有数据块
+            audio_base64_string = "".join(chunks)
+            
             # 解码base64得到PCM数据
             pcm_data = base64.b64decode(audio_base64_string)
             
@@ -393,8 +401,13 @@ class QwenOmniTTSModel:
         try:
             logger.info(f"开始调用Qwen Omni API生成音频，文本: {text[:30]}{'...' if len(text) > 30 else ''}")
             
-            prompt = f"复述这句话，不要输出其他内容，只输出'{text}'就好，不要输出其他内容，不要输出前后缀，不要输出'{text}'以外的内容，不要说：如果还有类似的需求或者想聊聊别的"
-            logger.info(f"使用prompt: {prompt}")
+            # 使用公共清理函数清理文本
+            safe_text = clean_text_for_tts(text, self.max_text_length)
+            
+            # 使用更安全的提示词格式，复用清理后的文本
+            prompt = f"""请用自然流畅的语音朗读以下文本，不要添加任何解释、前缀或后缀：{safe_text}请确保只输出指定的文本内容，不要添加任何其他内容。"""
+            
+            logger.info(f"使用安全的提示词格式，清理后文本长度: {len(safe_text)}")
             
             # 使用异步OpenAI客户端
             client = AsyncOpenAI(api_key=self.config.api_key, base_url=self.config.base_url)

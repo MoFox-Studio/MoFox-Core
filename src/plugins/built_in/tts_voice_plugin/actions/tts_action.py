@@ -178,8 +178,13 @@ class TTSVoiceAction(BaseAction):
         """
         try:
             if not self.tts_service:
-                logger.error(f"{self.log_prefix} TTSService 未注册或初始化失败，静默处理。")
-                return False, "TTSService 未注册或初始化失败"
+                error_msg = "TTS服务未正确初始化，请检查插件配置（特别是Qwen Omni的API密钥）"
+                logger.error(f"{self.log_prefix} {error_msg}")
+                await self.store_action_info(
+                    action_prompt_display="语音合成失败: TTS服务未正确初始化",
+                    action_done=False
+                )
+                return False, error_msg
 
             initial_text = self.action_data.get("tts_voice_text", "").strip()
             voice_style = self.action_data.get("voice_style", "default")

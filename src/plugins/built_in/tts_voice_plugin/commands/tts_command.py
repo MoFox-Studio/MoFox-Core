@@ -39,7 +39,9 @@ class TTSVoiceCommand(PlusCommand):
         try:
             tts_service = get_service("tts")
             if not tts_service:
-                raise RuntimeError("TTSService 未注册或初始化失败")
+                error_msg = "TTS服务未正确初始化，请检查插件配置（特别是Qwen Omni的API密钥）"
+                await self.send_text("❌ " + error_msg)
+                return False, error_msg, True
 
             # 获取可用风格列表 - 兼容不同的 TTS 服务类型
             available_styles = []
