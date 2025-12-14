@@ -121,4 +121,6 @@ INSTALL_NAME_TO_IMPORT_NAME = {
     "apache-airflow": "airflow",  # Airflow工作流管理
     "pandas-stubs": "pandas-stubs",  # Pandas的类型存根
     "data-science-types": "data_science_types",  # 数据科学类型
+    # ============== 语音 ==============
+    "openai-whisper": "whisper"  # 用于本地语音转文本功能
 }

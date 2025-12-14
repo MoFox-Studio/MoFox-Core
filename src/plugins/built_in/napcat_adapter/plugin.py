@@ -24,6 +24,7 @@ from src.plugin_system.base import BaseAdapter, BasePlugin
 
 from .src.handlers import utils as handler_utils
 from .src.handlers.to_core.message_handler import MessageHandler
+from .src.handlers.to_core.request_handler import RequestHandler
 from .src.handlers.to_core.meta_event_handler import MetaEventHandler
 from .src.handlers.to_core.notice_handler import NoticeHandler
 from .src.handlers.to_napcat.send_handler import SendHandler
@@ -72,6 +73,7 @@ class NapcatAdapter(BaseAdapter):
 
         # 初始化处理器
         self.message_handler = MessageHandler(self)
+        self.request_handler = RequestHandler(self)
         self.notice_handler = NoticeHandler(self)
         self.meta_event_handler = MetaEventHandler(self)
         self.send_handler = SendHandler(self)
@@ -181,6 +183,7 @@ class NapcatAdapter(BaseAdapter):
         # 设置处理器配置
         if self.plugin:
             self.message_handler.set_plugin_config(self.plugin.config)
+            self.request_handler.set_plugin_config(self.plugin.config)
             self.notice_handler.set_plugin_config(self.plugin.config)
             self.meta_event_handler.set_plugin_config(self.plugin.config)
             self.send_handler.set_plugin_config(self.plugin.config)
@@ -247,6 +250,7 @@ class NapcatAdapter(BaseAdapter):
         - message 事件 → 消息
         - notice 事件 → 通知（戳一戳、表情回复等）
         - meta_event 事件 → 元事件（心跳、生命周期）
+        - request 事件 →  请求（群邀请等）
         - API 响应 → 存入响应池
 
         注意：黑白名单等过滤机制在此方法最开始执行，确保所有类型的事件都能被过滤。
@@ -270,6 +274,10 @@ class NapcatAdapter(BaseAdapter):
             # 消息事件
             if post_type == "message":
                 return await self.message_handler.handle_raw_message(raw)  # type: ignore[return-value]
+
+            # 请求事件
+            elif post_type == "request":
+                return await self.request_handler.handle_request(raw)    # type: ignore[return-value]
 
             # 通知事件
             elif post_type == "notice":

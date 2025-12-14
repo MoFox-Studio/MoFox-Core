@@ -65,6 +65,21 @@ class NoticeHandler:
         }
 
         match notice_type:
+            case NoticeType.group_increase:
+                logger.info("群员增加消息")
+                sub_type = raw.get("sub_type")
+                user_id = raw.get("user_id")
+                fetched_member = await get_member_info(group_id=group_id, user_id=user_id) if group_id and user_id else None
+                nickname = fetched_member.get("nickname") if fetched_member else str(user_id)
+                handled_segment = {"type": "text", "data": f"[群成员变动] {nickname} 加入了群 ({sub_type})"}
+                user_info = {
+                    "user_id": str(user_id or ""),
+                    "user_nickname": nickname or "",
+                    "user_cardname": "",
+                }
+                notice_config["notice_type"] = "group_increase"
+                notice_config["is_notice"] = True
+                return None
             case NoticeType.friend_recall:
                 logger.info("好友撤回一条消息")
                 logger.info(f"撤回消息ID：{raw.get('message_id')}, 撤回时间：{raw.get('time')}")
