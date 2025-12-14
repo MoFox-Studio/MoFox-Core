@@ -61,6 +61,24 @@ class RequestHandler:
         flag = raw.get("flag")
         comment = raw.get("comment", "")
 
+        # 使用平台事件时间，如果不可用则回退到当前时间
+        raw_time = raw.get("time")
+        event_ts_seconds: float | None
+        try:
+            if raw_time is None:
+                event_ts_seconds = None
+            else:
+                # OneBot 平台一般使用秒时间戳，这里统一转换为 float
+                event_ts_seconds = float(raw_time)
+        except (TypeError, ValueError):
+            event_ts_seconds = None
+
+        if event_ts_seconds is None or event_ts_seconds <= 0:
+            # 无效或缺失时回退到当前时间
+            event_ts_seconds = time.time()
+
+        timestamp_ms = int(event_ts_seconds * 1000)
+
         if not request_type:
             logger.warning("缺少 request_type，跳过处理")
             return None
@@ -72,8 +90,8 @@ class RequestHandler:
 
         (
             mb.direction("incoming")
-            .message_id(str(flag or f"request:{int(time.time())}"))
-            .timestamp_ms(int(time.time() * 1000))
+            .message_id(str(flag or f"request:{timestamp_ms}"))
+            .timestamp_ms(timestamp_ms)
             .from_user(user_id=user_id, platform="qq")
         )
 
@@ -106,6 +124,8 @@ class RequestHandler:
                 "request_detail": {
                     "request_type": request_type,
                     "sub_type": sub_type,
+                    "user_id": user_id,
+                    "group_id": group_id,
                     "flag": flag,
                     "comment": comment,
                 },
