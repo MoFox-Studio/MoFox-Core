@@ -54,8 +54,8 @@ class RequestHandler:
         }
         """
 
-        request_type = raw.get("request_type")
-        sub_type = str(raw.get("sub_type", ""))
+        request_type = str(raw.get("request_type", "") or "")
+        sub_type = str(raw.get("sub_type", "") or "")
         user_id = str(raw.get("user_id", ""))
         group_id = raw.get("group_id")
         flag = raw.get("flag")
@@ -79,8 +79,8 @@ class RequestHandler:
 
         timestamp_ms = int(event_ts_seconds * 1000)
 
-        if not request_type:
-            logger.warning("缺少 request_type，跳过处理")
+        if request_type not in {"group", "friend"}:
+            logger.warning(f"不支持的 request_type: {request_type}")
             return None
 
         # 适配器层不再自动同意，由插件 auto_accept_requests 统一处理
@@ -92,20 +92,23 @@ class RequestHandler:
             mb.direction("incoming")
             .message_id(str(flag or f"request:{timestamp_ms}"))
             .timestamp_ms(timestamp_ms)
-            .from_user(user_id=user_id, platform="qq")
+            .from_user(user_id=user_id, platform=self.adapter.platform)
         )
 
         # 群信息（仅群请求）
         if request_type == "group" and group_id:
-            mb.from_group(group_id=str(group_id), platform="qq")
+            mb.from_group(group_id=str(group_id), platform=self.adapter.platform)
 
         # 片段占位，统一为文本提示
         if request_type == "group":
             text = f"收到群邀请请求，来自 {user_id}，群 {group_id}"
             content_format = ["text", "notify"]
-        else:
+        elif request_type == "friend":
             text = f"收到好友添加请求，来自 {user_id}"
             content_format = ["text", "notify"]
+        else:
+            logger.warning(f"不支持的 request_type: {request_type}")
+            return None
 
         mb.format_info(content_format=content_format, accept_format=ACCEPT_FORMAT)
         mb.seg_list([{"type": "text", "data": text}])
