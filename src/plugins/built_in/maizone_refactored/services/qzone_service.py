@@ -397,6 +397,7 @@ class QZoneService:
         comments = feed.get("comments", [])
         content = feed.get("content", "")
         fid = feed.get("tid", "")
+        images = feed.get("images", [])  # 获取说说中的图片
 
         if not comments or not fid:
             return
@@ -439,6 +440,7 @@ class QZoneService:
                     comment_content=comment_content,
                     commenter_name=nickname,
                     commenter_qq=commenter_qq,
+                    images=images,  # 传递说说中的图片
                 )
                 if reply_content:
                     success = await api_client["reply"](fid, qq_account, nickname, reply_content, comment_tid)

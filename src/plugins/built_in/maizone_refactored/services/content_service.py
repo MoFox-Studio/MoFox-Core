@@ -604,6 +604,7 @@ class ContentService:
         comment_content: str,
         commenter_name: str,
         commenter_qq: str | None = None,
+        images: list[str] | None = None,
     ) -> str:
         """
         针对自己说说的评论，生成回复。使用空间专用提示词。
@@ -612,6 +613,7 @@ class ContentService:
         :param comment_content: 评论内容
         :param commenter_name: 评论者名称
         :param commenter_qq: 评论者QQ号（可选）
+        :param images: 说说中的图片URL列表（可选）
         :return: 生成的回复内容
         """
         try:
@@ -636,6 +638,17 @@ class ContentService:
             # 获取关系信息
             relation_info = await self._get_relation_info(commenter_name, commenter_qq)
 
+            # 处理图片描述（如果有图片）
+            image_block = ""
+            if images:
+                image_descriptions = []
+                for image_url in images:
+                    description = await self._describe_image(image_url)
+                    if description:
+                        image_descriptions.append(description)
+                if image_descriptions:
+                    image_block = "\n\n# 你的说说配图\n\n" + "\n".join(f"- {desc}" for desc in image_descriptions)
+
             # 构建人设描述（三要素）
             personality_block = f"你的核心人格：{bot_personality_core}"
             if bot_personality_side:
@@ -657,9 +670,9 @@ class ContentService:
 - 场景: 回复自己说说下的评论
 - 评论者: {commenter_name}
 
-# 你发的说说
+# 你的说说文本
 
-{story_content}
+{story_content}{image_block}
 
 # {commenter_name}的评论
 
