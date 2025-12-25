@@ -256,6 +256,19 @@ def _prune_unknown_keys_by_schema(target: TOMLDocument | Table, schema_model: ty
     _prune_table(target, schema_model)
 
 
+def _create_multiline_array(value: list) -> Any:
+    """
+    创建一个多行格式的 tomlkit 数组
+    用于保持配置文件中数组的可读性（每个元素单独一行）
+    """
+    arr = tomlkit.array()
+    if value:
+        arr.multiline(True)
+        for item in value:
+            arr.append(item)
+    return arr
+
+
 def _update_dict(target: TOMLDocument | dict | Table, source: TOMLDocument | dict):
     """
     将source字典的值更新到target字典中
@@ -279,10 +292,9 @@ def _update_dict(target: TOMLDocument | dict | Table, source: TOMLDocument | dic
                 _update_dict(target_value, value)
             else:
                 try:
-                    # 对数组类型进行特殊处理
+                    # 对数组类型进行特殊处理，使用多行格式保持可读性
                     if isinstance(value, list):
-                        # 如果是空数组，确保它保持为空数组
-                        target[key] = tomlkit.array(str(value)) if value else tomlkit.array()
+                        target[key] = _create_multiline_array(value)
                     else:
                         # 其他类型使用item方法创建新值
                         target[key] = tomlkit.item(value)
@@ -298,8 +310,8 @@ def _update_dict(target: TOMLDocument | dict | Table, source: TOMLDocument | dic
                     _update_dict(new_table, value)
                     target[key] = new_table
                 elif isinstance(value, list):
-                    # 对于数组类型
-                    target[key] = tomlkit.array(str(value)) if value else tomlkit.array()
+                    # 对于数组类型，使用多行格式保持可读性
+                    target[key] = _create_multiline_array(value)
                 else:
                     # 其他类型使用item方法创建新值
                     target[key] = tomlkit.item(value)

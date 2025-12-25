@@ -496,6 +496,9 @@ class ContentService:
             bot_personality_core = config_api.get_global_config("personality.personality_core", "一个友好的机器人")
             bot_personality_side = config_api.get_global_config("personality.personality_side", "")
             bot_reply_style = config_api.get_global_config("personality.reply_style", "内容积极向上")
+            
+            # 获取互动规则
+            safety_guidelines = config_api.get_global_config("personality.safety_guidelines", [])
 
             # 获取时间信息
             now = datetime.datetime.now()
@@ -525,21 +528,30 @@ class ContentService:
             if bot_personality_side:
                 personality_block += f"\n你的人格侧面：{bot_personality_side}"
             personality_block += f"\n你的表达方式：{bot_reply_style}"
+            
+            # 构建互动规则
+            safety_block = ""
+            if safety_guidelines:
+                safety_block = "\n\n# 互动规则\n\n" + "\n".join(f"- {rule}" for rule in safety_guidelines[:5])  # 限制最多5条核心规则
 
             # 构建空间评论专用提示词
-            prompt = f"""# 人设定义
+            prompt = f"""# 平台说明
+
+**QQ空间**是中国最流行的社交平台之一，类似于Facebook的"动态"或Instagram。用户可以发表"说说"（类似朋友圈动态），好友可以点赞、评论和回复。这是一个记录生活、分享心情、与朋友互动的社交空间。
+
+# 人设定义
 
 {personality_block}
 
 # 用户关系
 
-{relation_info}
+{relation_info}{safety_block}
 
 # 当前场景
 
 - 时间: {current_time}
-- 场景: 浏览QQ空间
-- 目标: 为{target_name}的说说发表评论
+- 场景: 浏览QQ空间，为好友的说说发表评论
+- 目标: 为{target_name}的说说发表一条自然、友好的评论
 
 # 说说内容
 
@@ -562,7 +574,7 @@ class ContentService:
 
 # 输出要求
 
-直接输出评论正文，无任何前缀后缀。若无话可说则返回空。"""
+**严格遵守**：直接输出评论正文，不要输出任何思考过程、草稿、版本号或其他前缀后缀。若无话可说则返回空。"""
 
             # 输出提示词到日志（青色）
             logger.info(f"{PROMPT_HEADER_COLOR}{'='*50}{RESET_COLOR}")
@@ -605,6 +617,8 @@ class ContentService:
         commenter_name: str,
         commenter_qq: str | None = None,
         images: list[str] | None = None,
+        story_time: str | None = None,
+        comment_time: str | None = None,
     ) -> str:
         """
         针对自己说说的评论，生成回复。使用空间专用提示词。
@@ -614,6 +628,8 @@ class ContentService:
         :param commenter_name: 评论者名称
         :param commenter_qq: 评论者QQ号（可选）
         :param images: 说说中的图片URL列表（可选）
+        :param story_time: 说说发送时间（可选，格式: YYYY-MM-DD HH:MM:SS）
+        :param comment_time: 评论发送时间（可选，格式: YYYY-MM-DD HH:MM:SS）
         :return: 生成的回复内容
         """
         try:
@@ -630,10 +646,33 @@ class ContentService:
             bot_personality_core = config_api.get_global_config("personality.personality_core", "一个友好的机器人")
             bot_personality_side = config_api.get_global_config("personality.personality_side", "")
             bot_reply_style = config_api.get_global_config("personality.reply_style", "内容积极向上")
+            
+            # 获取互动规则
+            safety_guidelines = config_api.get_global_config("personality.safety_guidelines", [])
 
-            # 获取时间信息
+            # 获取当前时间信息
             now = datetime.datetime.now()
             current_time = now.strftime("%m月%d日 %H:%M")
+
+            # 格式化说说发送时间（如果提供）
+            story_time_display = ""
+            if story_time:
+                try:
+                    # 解析时间字符串 (格式: YYYY-MM-DD HH:MM:SS)
+                    story_dt = datetime.datetime.strptime(story_time, "%Y-%m-%d %H:%M:%S")
+                    story_time_display = story_dt.strftime("%m月%d日 %H:%M")
+                except ValueError:
+                    story_time_display = story_time  # 如果解析失败，使用原始字符串
+
+            # 格式化评论时间（如果提供）
+            comment_time_display = ""
+            if comment_time:
+                try:
+                    # 解析时间字符串 (格式: YYYY-MM-DD HH:MM:SS)
+                    comment_dt = datetime.datetime.strptime(comment_time, "%Y-%m-%d %H:%M:%S")
+                    comment_time_display = comment_dt.strftime("%m月%d日 %H:%M")
+                except ValueError:
+                    comment_time_display = comment_time  # 如果解析失败，使用原始字符串
 
             # 获取关系信息
             relation_info = await self._get_relation_info(commenter_name, commenter_qq)
@@ -654,21 +693,43 @@ class ContentService:
             if bot_personality_side:
                 personality_block += f"\n你的人格侧面：{bot_personality_side}"
             personality_block += f"\n你的表达方式：{bot_reply_style}"
+            
+            # 构建互动规则
+            safety_block = ""
+            if safety_guidelines:
+                safety_block = "\n\n# 互动规则\n\n" + "\n".join(f"- {rule}" for rule in safety_guidelines[:5])  # 限制最多5条核心规则
+
+            # 构建时间信息块（清晰标注各个时间点，帮助模型理解时间线）
+            time_info_lines = [f"- 当前时间: {current_time}"]
+            if story_time_display:
+                time_info_lines.append(f"- 说说发送时间: {story_time_display}")
+            if comment_time_display:
+                time_info_lines.append(f"- 评论时间: {comment_time_display}")
+            time_info_block = "\n".join(time_info_lines)
 
             # 构建空间回复专用提示词
-            prompt = f"""# 人设定义
+            prompt = f"""# 平台说明
+
+**QQ空间**是中国最流行的社交平台之一，类似于Facebook的"动态"或Instagram。用户可以发表"说说"（类似朋友圈动态），好友可以点赞、评论和回复。这是一个记录生活、分享心情、与朋友互动的社交空间。
+
+# 人设定义
 
 {personality_block}
 
 # 用户关系
 
-{relation_info}
+{relation_info}{safety_block}
 
 # 当前场景
 
-- 时间: {current_time}
+{time_info_block}
 - 场景: 回复自己说说下的评论
 - 评论者: {commenter_name}
+
+**时间线理解**：
+- "说说发送时间"是你发这条说说的时间
+- "评论时间"是{commenter_name}在你说说下留言的时间
+- "当前时间"是你现在准备回复的时间
 
 # 你的说说文本
 
@@ -685,6 +746,7 @@ class ContentService:
 2. 简短自然，控制在15-30字左右
 3. 可感谢关注、回应观点、延续话题、轻松调侃
 4. 保持风格一致
+5. 注意时间差异：如果评论时间和说说时间相差较大，可以体现出"刚看到"的自然感
 
 ## 禁止事项
 - Emoji表情符号
@@ -694,7 +756,7 @@ class ContentService:
 
 # 输出要求
 
-直接输出回复正文，无任何前缀后缀。若无话可说则返回空。"""
+**严格遵守**：直接输出回复正文，不要输出任何思考过程、草稿、版本号或其他前缀后缀。若无话可说则返回空。"""
 
             # 输出提示词到日志（青色）
             logger.info(f"{PROMPT_HEADER_COLOR}{'='*50}{RESET_COLOR}")
@@ -709,7 +771,7 @@ class ContentService:
                 model_config=model_config,
                 request_type="maizone.qzone_reply",
                 temperature=0.4,
-                max_tokens=500,  # 增加 max_tokens 防止截断
+                max_tokens=8000,  
             )
 
             if success:

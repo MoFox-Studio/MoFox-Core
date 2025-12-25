@@ -398,6 +398,7 @@ class QZoneService:
         content = feed.get("content", "")
         fid = feed.get("tid", "")
         images = feed.get("images", [])  # 获取说说中的图片
+        story_time = feed.get("created_time", "")  # 获取说说发送时间
 
         if not comments or not fid:
             return
@@ -433,11 +434,14 @@ class QZoneService:
             nickname = comment.get("nickname", "")
             comment_content = comment.get("content", "")
             commenter_qq = str(comment.get("qq_account", "")) if comment.get("qq_account") else None
+            comment_time = comment.get("create_time", "")  # 获取评论时间
 
             try:
                 reply_content = await self.content_service.generate_comment_reply(
                     story_content=content,
+                    story_time=story_time,  # 传递说说发送时间
                     comment_content=comment_content,
+                    comment_time=comment_time,  # 传递评论时间
                     commenter_name=nickname,
                     commenter_qq=commenter_qq,
                     images=images,  # 传递说说中的图片
@@ -897,6 +901,7 @@ class QZoneService:
                 logger.debug(f"HTTP请求返回，响应长度={len(res_text)}")
                 json_data = orjson.loads(res_text)
                 logger.debug(f"JSON解析成功，code={json_data.get('code')}")
+
                 if json_data.get("code") != 0:
                     error_code = json_data.get("code")
                     error_message = json_data.get("message", "未知错误")
@@ -941,10 +946,31 @@ class QZoneService:
                     # --- 解析完整评论列表 (包括二级评论) ---
                     comments = []
                     commentlist = msg.get("commentlist")
+
                     if isinstance(commentlist, list):
                         for c in commentlist:
                             if not isinstance(c, dict):
                                 continue
+
+                            # 解析评论时间（优先使用 createTime2，它是完整的格式化时间）
+                            comment_create_time = ""
+                            # 优先使用 createTime2（格式：YYYY-MM-DD HH:MM:SS）
+                            if c.get("createTime2"):
+                                comment_create_time = c.get("createTime2")
+                            elif c.get("create_time"):
+                                # create_time 是时间戳
+                                raw_time = c.get("create_time")
+                                try:
+                                    if isinstance(raw_time, (int, float)):
+                                        comment_create_time = time.strftime(
+                                            "%Y-%m-%d %H:%M:%S", time.localtime(int(raw_time))
+                                        )
+                                    elif isinstance(raw_time, str) and raw_time.isdigit():
+                                        comment_create_time = time.strftime(
+                                            "%Y-%m-%d %H:%M:%S", time.localtime(int(raw_time))
+                                        )
+                                except (ValueError, TypeError):
+                                    pass
 
                             # 添加主评论
                             comments.append(
@@ -954,6 +980,7 @@ class QZoneService:
                                     "content": c.get("content"),
                                     "comment_tid": c.get("tid"),
                                     "parent_tid": None,  # 主评论没有父ID
+                                    "create_time": comment_create_time,  # 添加评论时间
                                 }
                             )
                             # 检查并添加二级评论 (回复)
@@ -961,6 +988,25 @@ class QZoneService:
                                 for reply in c["list_3"]:
                                     if not isinstance(reply, dict):
                                         continue
+
+                                    # 解析二级评论时间（优先使用 createTime2）
+                                    reply_create_time = ""
+                                    if reply.get("createTime2"):
+                                        reply_create_time = reply.get("createTime2")
+                                    elif reply.get("create_time"):
+                                        raw_time = reply.get("create_time")
+                                        try:
+                                            if isinstance(raw_time, (int, float)):
+                                                reply_create_time = time.strftime(
+                                                    "%Y-%m-%d %H:%M:%S", time.localtime(int(raw_time))
+                                                )
+                                            elif isinstance(raw_time, str) and raw_time.isdigit():
+                                                reply_create_time = time.strftime(
+                                                    "%Y-%m-%d %H:%M:%S", time.localtime(int(raw_time))
+                                                )
+                                        except (ValueError, TypeError):
+                                            pass
+
                                     comments.append(
                                         {
                                             "qq_account": reply.get("uin"),
@@ -968,6 +1014,7 @@ class QZoneService:
                                             "content": reply.get("content"),
                                             "comment_tid": reply.get("tid"),
                                             "parent_tid": c.get("tid"),  # 父ID是主评论的ID
+                                            "create_time": reply_create_time,  # 添加评论时间
                                         }
                                     )
 
