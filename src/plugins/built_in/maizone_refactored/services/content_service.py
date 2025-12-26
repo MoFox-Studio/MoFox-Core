@@ -352,8 +352,19 @@ class ContentService:
 
                 except Exception as e:
                     logger.error(f"解析JSON失败: {e}, 原始响应: {response[:200]}")
-                    # 降级处理：只返回文本，空配图信息
-                    return response, {}
+                    # 安全降级：检测截断并拒绝发送无效内容
+                    # 宁愿失败也不要发出残缺的JSON
+                    if self._is_truncated_json(response):
+                        logger.warning("检测到响应被截断，拒绝发送残缺内容，返回空")
+                        return "", {}
+                    # 尝试从残缺JSON中提取text字段
+                    extracted_text = self._extract_text_from_broken_json(response)
+                    if extracted_text:
+                        logger.info(f"从残缺JSON中成功提取文本: '{extracted_text[:50]}...'")
+                        return extracted_text, {}
+                    # 无法提取有效内容，返回空
+                    logger.warning("无法从响应中提取有效内容，返回空")
+                    return "", {}
             else:
                 logger.error("生成说说内容失败")
                 return "", {}
@@ -460,6 +471,82 @@ class ContentService:
 
         return cleaned.strip()
 
+    def _is_truncated_json(self, response: str) -> bool:
+        """
+        检测响应是否是被截断的JSON。
+        
+        :param response: LLM的原始响应
+        :return: 如果检测到截断返回True
+        """
+        if not response:
+            return False
+        
+        response = response.strip()
+        
+        # 如果以 { 开头但不以 } 结尾，很可能是截断的JSON
+        if response.startswith("{") and not response.endswith("}"):
+            return True
+        
+        # 如果以 [ 开头但不以 ] 结尾，也是截断
+        if response.startswith("[") and not response.endswith("]"):
+            return True
+        
+        # 检查是否有未闭合的引号（简单检测）
+        # 如果引号数量是奇数，说明有未闭合的字符串
+        quote_count = response.count('"')
+        if response.startswith("{") and quote_count % 2 != 0:
+            return True
+        
+        return False
+
+    def _extract_text_from_broken_json(self, response: str) -> str:
+        """
+        尝试从残缺的JSON响应中提取text字段的内容。
+        
+        :param response: 可能被截断的JSON响应
+        :return: 提取到的文本，如果失败返回空字符串
+        """
+        import re
+        
+        if not response:
+            return ""
+        
+        # 尝试多种模式匹配 "text": "内容"
+        patterns = [
+            # 标准格式: "text": "内容"
+            r'"text"\s*:\s*"([^"]*)"',
+            # 带转义的格式
+            r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            # text 字段可能是被截断的，尝试提取到响应末尾
+            r'"text"\s*:\s*"([^"]*)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response, re.DOTALL)
+            if match:
+                extracted = match.group(1)
+                # 清理转义字符
+                extracted = extracted.replace('\\"', '"')
+                extracted = extracted.replace('\\n', '\n')
+                extracted = extracted.replace('\\t', '\t')
+                
+                # 验证提取的内容有效性
+                # 1. 不能是空的
+                if not extracted.strip():
+                    continue
+                # 2. 不能太短（少于3个字符可能是无效内容）
+                if len(extracted.strip()) < 3:
+                    continue
+                # 3. 不能以明显的截断符号结尾
+                if extracted.endswith('\\') or extracted.endswith(','):
+                    extracted = extracted[:-1].strip()
+                
+                # 最终验证
+                if extracted.strip():
+                    return extracted.strip()
+        
+        return ""
+
     async def generate_qzone_comment(
         self,
         target_name: str,
@@ -496,7 +583,7 @@ class ContentService:
             bot_personality_core = config_api.get_global_config("personality.personality_core", "一个友好的机器人")
             bot_personality_side = config_api.get_global_config("personality.personality_side", "")
             bot_reply_style = config_api.get_global_config("personality.reply_style", "内容积极向上")
-            
+
             # 获取互动规则
             safety_guidelines = config_api.get_global_config("personality.safety_guidelines", [])
 
@@ -528,7 +615,7 @@ class ContentService:
             if bot_personality_side:
                 personality_block += f"\n你的人格侧面：{bot_personality_side}"
             personality_block += f"\n你的表达方式：{bot_reply_style}"
-            
+
             # 构建互动规则
             safety_block = ""
             if safety_guidelines:
@@ -563,7 +650,7 @@ class ContentService:
 1. 考虑关系亲疏，调整语气和内容
 2. 尊重对方空间，不说教、不随意给建议
 3. 自然互动，表达共鸣、好奇或轻松闲聊
-4. 简短自然，控制在15-30字左右
+4. 简短自然，控制在20-35字左右
 5. 保持真实，符合人格表达
 
 ## 禁止事项
@@ -572,9 +659,21 @@ class ContentService:
 - 格式化标记
 - 敏感话题
 
-# 输出要求
+# 输出要求（最高优先级）
 
-**严格遵守**：直接输出评论正文，不要输出任何思考过程、草稿、版本号或其他前缀后缀。若无话可说则返回空。"""
+你的输出必须且只能是一条评论正文本身。
+
+## 绝对禁止输出的内容
+- 思考过程（如"我应该..."、"让我想想..."）
+- 草稿或修改（如"*再精简*:"、"版本1:"、"修改后:"）
+- 字数统计
+- 多个版本或备选方案
+- 任何前缀说明（如"评论内容："、"我的回复是："）
+- 任何后缀补充
+- 换行符（评论必须在一行内）
+
+## 输出格式
+直接输出评论正文，不带任何修饰。若无话可说则返回空。"""
 
             # 输出提示词到日志（青色）
             logger.info(f"{PROMPT_HEADER_COLOR}{'='*50}{RESET_COLOR}")
@@ -646,7 +745,7 @@ class ContentService:
             bot_personality_core = config_api.get_global_config("personality.personality_core", "一个友好的机器人")
             bot_personality_side = config_api.get_global_config("personality.personality_side", "")
             bot_reply_style = config_api.get_global_config("personality.reply_style", "内容积极向上")
-            
+
             # 获取互动规则
             safety_guidelines = config_api.get_global_config("personality.safety_guidelines", [])
 
@@ -693,7 +792,7 @@ class ContentService:
             if bot_personality_side:
                 personality_block += f"\n你的人格侧面：{bot_personality_side}"
             personality_block += f"\n你的表达方式：{bot_reply_style}"
-            
+
             # 构建互动规则
             safety_block = ""
             if safety_guidelines:
@@ -754,9 +853,21 @@ class ContentService:
 - 敏感话题
 - "回复@xxx："格式
 
-# 输出要求
+# 输出要求（最高优先级）
 
-**严格遵守**：直接输出回复正文，不要输出任何思考过程、草稿、版本号或其他前缀后缀。若无话可说则返回空。"""
+你的输出必须且只能是一条回复正文本身。
+
+## 绝对禁止输出的内容
+- 思考过程（如"我应该..."、"让我想想..."）
+- 草稿或修改（如"*再精简*:"、"版本1:"、"修改后:"）
+- 字数统计
+- 多个版本或备选方案
+- 任何前缀说明（如"回复内容："、"我的回复是："）
+- 任何后缀补充
+- 换行符（回复必须在一行内）
+
+## 输出格式
+直接输出回复正文，不带任何修饰。若无话可说则返回空。"""
 
             # 输出提示词到日志（青色）
             logger.info(f"{PROMPT_HEADER_COLOR}{'='*50}{RESET_COLOR}")
@@ -771,7 +882,7 @@ class ContentService:
                 model_config=model_config,
                 request_type="maizone.qzone_reply",
                 temperature=0.4,
-                max_tokens=8000,  
+                max_tokens=8000,
             )
 
             if success:
@@ -784,12 +895,12 @@ class ContentService:
                     reply = reply[1:-1]
                 # 移除可能的"回复@xxx："格式
                 import re
-                reply = re.sub(r'^回复\s*@[^:：]+[：:]\s*', '', reply)
-                reply = re.sub(r'^@[^:：\s]+[：:]\s*', '', reply)
-                
+                reply = re.sub(r"^回复\s*@[^:：]+[：:]\s*", "", reply)
+                reply = re.sub(r"^@[^:：\s]+[：:]\s*", "", reply)
+
                 # 在回复内容前加上 @用户名（空间回复需要@对方）
                 reply_with_at = f"@{commenter_name} {reply}"
-                
+
                 logger.info(f"成功为'{commenter_name}'的评论生成回复（长度{len(reply_with_at)}）: '{reply_with_at}'")
                 return reply_with_at
             else:

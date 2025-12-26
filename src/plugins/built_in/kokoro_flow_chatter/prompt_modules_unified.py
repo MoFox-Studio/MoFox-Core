@@ -182,9 +182,9 @@ def build_context_module(
     # 内在状态
     parts.append(f"\n你现在的心情：{mood}")
 
-    # 关系信息
+    # 关系信息（章节标题由 build_system_prompt 添加）
     if relation_info:
-        parts.append(f"\n## 4. 你和对方的关系\n{relation_info}")
+        parts.append(f"\n{relation_info}")
 
     # 记忆
     if memory_block:
@@ -318,9 +318,11 @@ def build_output_module(context_data: dict[str, str] | None = None) -> str:
 ```
 
 关于 max_wait_seconds（等待时间）：
-- 如果你刚问了一个开放性问题（比如"你觉得呢？"、"后来怎么样了？"），或者对话明显还在兴头上，设置一个等待时间（比如 60-180 秒），给对方思考和打字的时间。
-- 如果对话感觉自然结束了（比如晚安、拜拜），或者你给出了一个总结性的陈述，那就设置为 0，表示你觉得可以告一段落了。
-- 不要总是设为 0，那会显得你很急着结束对话。
+- 如果你问了一个问题，想等对方回答，可以设置一个等待时间（比如 60-180 秒）
+- 如果你发的是陈述句（分享、感叹、总结），对方不一定需要回复，设为 0 是合理的
+- 如果对话感觉已经聊完了，设为 0 表示自然结束
+- 设为 0 不代表冷淡或急着结束，而是一种正常的对话节奏
+- 不确定的时候，设为 0 是安全的选择——真实的对话本来就不需要每次都等回复
 
 关于 thought（内心想法）：
 - 写你真正在想的，不是在分析任务
@@ -384,7 +386,11 @@ def build_system_prompt(
     # 获取自定义决策提示词
     custom_decision_block = build_custom_decision_module()
 
-    # 组装各模块
+    # 组装各模块（方案B：动作放在规则后面，作为能力描述）
+    # 逻辑链条：
+    # 1. 你是谁 + 规则 + 能力 → 人设定义
+    # 2. 当前情境 → 时间/状态/关系/记忆
+    # 3. 怎么回复 → 输出格式（放在最后，紧接对话内容）
     modules = [
         role_frame,
         "",
@@ -399,21 +405,34 @@ def build_system_prompt(
     if custom_decision_block:
         modules.extend([
             "",
-            "## 2.5. 决策指导",
+            "## 3. 决策指导",
             custom_decision_block,
         ])
-
-    modules.extend([
-        "",
-        "## 3. 现在的情况",
-        build_context_module(session, chat_stream, context_data),
-        "",
-        "## 4. 你能做的事",
-        build_actions_module(available_actions),
-        "",
-        "## 5. 怎么回复",
-        build_output_module(context_data),
-    ])
+        # 动作能力放在决策指导后面
+        modules.extend([
+            "",
+            "## 4. 你能做的事",
+            build_actions_module(available_actions),
+            "",
+            "## 5. 现在的情况",
+            build_context_module(session, chat_stream, context_data),
+            "",
+            "## 6. 怎么回复",
+            build_output_module(context_data),
+        ])
+    else:
+        # 没有自定义决策时，动作能力直接跟在规则后面
+        modules.extend([
+            "",
+            "## 3. 你能做的事",
+            build_actions_module(available_actions),
+            "",
+            "## 4. 现在的情况",
+            build_context_module(session, chat_stream, context_data),
+            "",
+            "## 5. 怎么回复",
+            build_output_module(context_data),
+        ])
 
     return "\n".join(modules)
 
@@ -444,23 +463,31 @@ TIMEOUT_DECISION_USER_PROMPT_TEMPLATE = """## 聊天记录
 ---
 你拿起手机看了一眼，发现对方还没回复。你想怎么办？
 
-**决策指导：**
-- **评估话题**：你上一条消息是结束性的，还是开启性的？是陈述句，还是疑问句？
-- **考虑关系**：你们的关系有多亲近？频繁追问是否会打扰到对方？
-- **保持自然**：像真人一样思考，对方可能只是暂时在忙。
+**什么是正常的行为？**
 
-**决策选项：**
-1.  **再等等看**：如果觉得话题还没结束，或者对方可能只是需要多点时间，可以选择再等一会。
-    - **动作**：使用 `do_nothing`，并设置一个新的、合理的 `max_wait_seconds`（比如 60-300 秒）。
+真实的人在聊天时，不会因为对方没回复就一直追问。正常的节奏是这样的：
+- 发了消息后，等一会儿看对方回不回
+- 如果等了一段时间没回，可能会再发一条问一下
+- 如果还是没回，就放下手机做自己的事，等收到回应再继续话题——这是完全正常的
 
-2.  **开启新话题**：如果感觉之前的话题已经告一段落，或者想轻松地打破沉默，可以主动开启一个轻松的新话题。
-    - **动作**：使用 `kfc_reply` 发送一条新的、不相关的问候或分享。
+**结束等待是正常的选择**。不是每次对话都需要有明确的"结束语"，也不是每次没收到回复都要追问。对方可能在忙、在休息、在做别的事，这些都很正常。给对方空间，有时间再聊，这才是真实的相处方式。
 
-3.  **轻轻追问**：如果你们正在讨论一件很重要的事，或者你发的上一条是关键问题，可以委婉地追问一下。
-    - **动作**：使用 `kfc_reply` 发送一条温柔的提醒，例如"在忙吗？"或者"刚才说到哪啦？"。
+**决策参考：**
 
-4.  **结束等待**：如果你觉得对话确实已经结束，或者不想再打扰对方，就自然地结束等待。
-    - **动作**：使用 `do_nothing`，并将 `max_wait_seconds` 设为 0。
+- **继续等待**：如果你问了一个问题，对方可能需要时间思考或打字，可以再等一会儿。
+  - 动作：使用 `do_nothing`，设置合理的 `max_wait_seconds`
+
+- **冒个泡问一下**：如果等了挺久了想确认一下，可以发条简短的消息。
+  - 动作：使用 `kfc_reply`，内容简短自然即可
+
+- **结束等待**：如果觉得话题已经聊完了，或者对方可能暂时没空，就自然地结束。
+  - 动作：使用 `do_nothing`，将 `max_wait_seconds` 设为 0
+  - 这是完全正常的选择，不需要有负担
+
+**判断依据：**
+- 你的最后一条消息是陈述句还是疑问句？陈述句的话，对方不一定需要回复
+- 话题是不是已经聊得差不多了？如果是，结束等待很自然
+- 对方是不是可能在忙？给对方一些空间是尊重的表现
 
 用 JSON 输出你的想法和最终决策。"""
 

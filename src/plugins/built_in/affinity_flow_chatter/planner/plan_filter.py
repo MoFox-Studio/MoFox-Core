@@ -489,7 +489,7 @@ class ChatterPlanFilter:
             # 构建已读历史消息块
             if read_messages:
                 read_content, _ = await build_readable_messages_with_id(
-                    messages=[msg.flatten() for msg in read_messages[-50:]],  # 限制数量
+                    messages=[msg.flatten() for msg in read_messages[-80:]],  # 限制数量
                     timestamp_mode="normal_no_YMD",
                     truncate=False,
                     show_actions=False,

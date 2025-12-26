@@ -88,18 +88,18 @@ class CookieService:
         try:
             timeout = aiohttp.ClientTimeout(total=15)
             payload = {"domain": "user.qzone.qq.com"}
-            
+
             # 构建请求头，包含Token认证
             headers = {"Content-Type": "application/json"}
             if napcat_token:
                 headers["Authorization"] = f"Bearer {napcat_token}"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(http_url, json=payload, headers=headers, timeout=timeout) as response:
                     if response.status == 403:
-                        logger.debug(f"HTTP备用地址返回403 Forbidden，可能需要配置napcat_token。")
+                        logger.debug("HTTP备用地址返回403 Forbidden，可能需要配置napcat_token。")
                         return None
-                    
+
                     response.raise_for_status()
                     data = await response.json()
 
@@ -112,7 +112,7 @@ class CookieService:
                             for k, v in (p.split("=", 1) for p in cookie_str.split("; ") if "=" in p)
                         }
 
-                    logger.warning(f"从HTTP备用地址获取的Cookie格式不正确或为空。")
+                    logger.warning("从HTTP备用地址获取的Cookie格式不正确或为空。")
                     return None
         except aiohttp.ClientError as e:
             logger.debug(f"通过HTTP备用地址获取Cookie失败: {e}")
@@ -130,22 +130,22 @@ class CookieService:
         # 1. 优先尝试从本地文件加载（最快）
         cookies = self._load_cookies_from_file(qq_account)
         if cookies:
-            logger.info(f"从本地缓存加载Cookie成功。")
+            logger.info("从本地缓存加载Cookie成功。")
             return cookies
 
         # 2. 尝试从HTTP备用端点获取
-        logger.info(f"本地缓存不存在，尝试HTTP备用地址...")
+        logger.info("本地缓存不存在，尝试HTTP备用地址...")
         cookies = await self._get_cookies_from_http()
         if cookies:
-            logger.info(f"从HTTP备用地址获取Cookie成功。")
+            logger.info("从HTTP备用地址获取Cookie成功。")
             self._save_cookies_to_file(qq_account, cookies)
             return cookies
 
         # 3. 尝试从Adapter获取（最可靠的方式）
-        logger.info(f"HTTP方式失败，尝试Adapter API...")
+        logger.info("HTTP方式失败，尝试Adapter API...")
         cookies = await self._get_cookies_from_adapter(stream_id)
         if cookies:
-            logger.info(f"从Adapter API获取Cookie成功。")
+            logger.info("从Adapter API获取Cookie成功。")
             self._save_cookies_to_file(qq_account, cookies)
             return cookies
 
