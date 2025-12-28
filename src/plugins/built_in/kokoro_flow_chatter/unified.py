@@ -151,25 +151,21 @@ class UnifiedPromptGenerator:
 
         if followup_count >= max_followups:
             followup_warning = f"""
-你已经追问了 {followup_count} 次，对方都没有回复。
-强烈建议这次选择结束等待（`do_nothing` + `max_wait_seconds: 0`）。
-对方可能在忙或者暂时不方便回复，这是很正常的事情。
-给对方一些空间，改天再聊就好。"""
+⚠️ 你已经追问了 {followup_count} 次，对方都没有回复。
+建议这次结束等待（`max_wait_seconds: 0`），给对方一些空间。"""
 
         elif followup_count == 1:
             followup_warning = """
-这是你第2次等待对方回复了。
-建议选择结束等待，或者发一条简短的消息比如"看到了记得回我"之类的。
-不需要一直追问，给对方空间也是一种体贴。"""
+这是第2次等待了。
+- 如果之前问了问题，可以再问一下
+- 如果之前只是分享或告别，建议结束等待"""
 
         elif followup_count == 0:
             followup_warning = """
-这是第一次超时。你可以：
-- 再等一会儿看对方回不回
-- 发条简短的消息问一下
-- 或者直接结束等待，改天再聊
-
-选择结束等待也是完全正常的，不是每次对话都需要追问。"""
+这是第一次超时。根据你之前发的消息类型来决定：
+- 问题 → 可以追问
+- 分享 → 结束等待也行
+- 告别 → 不要追问"""
 
         else:
             followup_warning = ""
