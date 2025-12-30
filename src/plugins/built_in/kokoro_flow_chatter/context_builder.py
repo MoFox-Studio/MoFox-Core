@@ -259,6 +259,7 @@ class KFCContextBuilder:
                     f"[KFC记忆] 检索到 {total_count} 条记忆 "
                     f"(感知:{len(perceptual_blocks)}, 短期:{len(short_term_memories)}, 长期:{len(long_term_memories)})"
                 )
+                # 添加记忆块标题，感知记忆的来源说明已在 three_tier_formatter 中添加
                 return f"### 🧠 相关记忆\n\n{formatted_memories}"
 
             logger.debug("[KFC记忆] 记忆为空")

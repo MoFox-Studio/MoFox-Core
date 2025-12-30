@@ -186,7 +186,7 @@ def build_context_module(
     if relation_info:
         parts.append(f"\n{relation_info}")
 
-    # 记忆
+    # 记忆（感知记忆可能来自其他聊天流，注意区分）
     if memory_block:
         parts.append(f"\n{memory_block}")
 

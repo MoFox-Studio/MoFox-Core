@@ -143,6 +143,7 @@ class ThreeTierMemoryFormatter:
         perceptual_text = await self.format_perceptual_memory(perceptual_blocks)
         if perceptual_text:
             sections.append("### 感知记忆（即时对话）")
+            sections.append("*注意：以下消息来自不同的聊天流（括号内标注了来源），不一定是当前对话*")
             sections.append(perceptual_text)
             sections.append("")
 

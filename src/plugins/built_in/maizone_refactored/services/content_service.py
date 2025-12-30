@@ -480,23 +480,23 @@ class ContentService:
         """
         if not response:
             return False
-        
+
         response = response.strip()
-        
+
         # 如果以 { 开头但不以 } 结尾，很可能是截断的JSON
         if response.startswith("{") and not response.endswith("}"):
             return True
-        
+
         # 如果以 [ 开头但不以 ] 结尾，也是截断
         if response.startswith("[") and not response.endswith("]"):
             return True
-        
+
         # 检查是否有未闭合的引号（简单检测）
         # 如果引号数量是奇数，说明有未闭合的字符串
         quote_count = response.count('"')
         if response.startswith("{") and quote_count % 2 != 0:
             return True
-        
+
         return False
 
     def _extract_text_from_broken_json(self, response: str) -> str:
@@ -507,10 +507,10 @@ class ContentService:
         :return: 提取到的文本，如果失败返回空字符串
         """
         import re
-        
+
         if not response:
             return ""
-        
+
         # 尝试多种模式匹配 "text": "内容"
         patterns = [
             # 标准格式: "text": "内容"
@@ -520,16 +520,16 @@ class ContentService:
             # text 字段可能是被截断的，尝试提取到响应末尾
             r'"text"\s*:\s*"([^"]*)',
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, response, re.DOTALL)
             if match:
                 extracted = match.group(1)
                 # 清理转义字符
                 extracted = extracted.replace('\\"', '"')
-                extracted = extracted.replace('\\n', '\n')
-                extracted = extracted.replace('\\t', '\t')
-                
+                extracted = extracted.replace("\\n", "\n")
+                extracted = extracted.replace("\\t", "\t")
+
                 # 验证提取的内容有效性
                 # 1. 不能是空的
                 if not extracted.strip():
@@ -538,13 +538,13 @@ class ContentService:
                 if len(extracted.strip()) < 3:
                     continue
                 # 3. 不能以明显的截断符号结尾
-                if extracted.endswith('\\') or extracted.endswith(','):
+                if extracted.endswith("\\") or extracted.endswith(","):
                     extracted = extracted[:-1].strip()
-                
+
                 # 最终验证
                 if extracted.strip():
                     return extracted.strip()
-        
+
         return ""
 
     async def generate_qzone_comment(
