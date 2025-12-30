@@ -1,21 +1,29 @@
-# 翻译说明
+# Translation Credits & Disclaimer
 
-## 翻译作者
+---
+
+## Translator
 
 <div align="center">
-  <a href="https://github.com/LuisKlee">
-    <img src="https://avatars.githubusercontent.com/u/LuisKlee?v=4" width="100" height="100" style="border-radius: 50%; display: block; margin: 20px auto;" alt="LuisKlee">
+  <a href="https://github.com/LuisKlee" target="_blank">
+    <img src="https://avatars.githubusercontent.com/u/LuisKlee?v=4" width="120" height="120" style="border-radius: 50%; display: block; margin: 20px auto;" alt="LuisKlee Avatar">
   </a>
-  <p><strong>LuisKlee</strong></p>
-  <p><a href="https://github.com/LuisKlee">GitHub 主页</a></p>
+  
+  **[LuisKlee](https://github.com/LuisKlee)**
+  
+  *Translator of English Documentation*
 </div>
 
-## ⚠️ 翻译准确性说明
+---
 
-本文档为 MoFox-Core 项目的翻译版本。**请注意翻译内容可能不准确**，建议：
+## ⚠️ Accuracy Notice
 
-- 在重要决策前参考原始文档
-- 如发现翻译错误或不当之处，欢迎反馈
-- 优先参考官方中文文档（如有）
+This documentation folder contains **English translations** of the MoFox-Core project materials.
 
-感谢翻译者的贡献！
+**Please be aware that translations may not be perfectly accurate.** We recommend:
+
+- ✓ Refer to the original Chinese documentation for critical decisions
+- ✓ Report any translation errors or issues via GitHub issues
+- ✓ Cross-reference with official sources when needed
+
+**Thank you for the translator's contribution!** 🙏
