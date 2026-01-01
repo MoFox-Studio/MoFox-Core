@@ -290,7 +290,7 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
     final_sentences = []
     for i, (content, sep) in enumerate(merged_segments):
         if not content: continue
-        
+
         # --- 优化：保护语气符号不被移除 ---
         # 如果是最后一段，或者分隔符是语气/情感符号，则保留分隔符
         if i == len(merged_segments) - 1 or sep in {"∽", "≈", "~", "～", "…", "！", "!", "？", "?"}:
@@ -371,8 +371,8 @@ def protect_special_blocks(text: str) -> tuple[str, dict[str, str]]:
     try:
         matches = re.findall(general_pattern, text)
         for match in matches:
-            # 避免将包含占位符的片段再次保护
-            if "__SPECIAL_" in match:
+            # 避免将包含占位符的片段或者LLM分割标记再次保护
+            if "__SPECIAL_" in match or global_config.response_splitter.split_mode == "llm" and match == "[SPLIT]":
                 continue
 
             placeholder = f"__SPECIAL_GENERAL_{placeholder_idx}__"
@@ -520,7 +520,7 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
                 # 如果前一句以强标点结尾，合并代价翻 5 倍，使其极难被选中
                 if sentences[i].endswith(("。", "；", ";", "！", "!", "？", "?")):
                     resistance = 5.0
-                
+
                 cost = (len(sentences[i]) + len(sentences[i+1])) * resistance
                 if cost < min_cost:
                     min_cost = cost
@@ -532,7 +532,7 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
                     merged_sentence = sentences[merge_idx] + "，" + sentences[merge_idx + 1]
                 else:
                     merged_sentence = sentences[merge_idx] + sentences[merge_idx + 1]
-                
+
                 sentences[merge_idx] = merged_sentence
                 del sentences[merge_idx + 1]
 
@@ -924,7 +924,10 @@ def filter_system_format_content(content: str | None) -> str:
             cleaned_content = cleaned_content[last_bracket_index + 1 :].strip()
             cleaned_content = re.sub(r"^(，|,)说：", "", cleaned_content).strip()
 
-    cleaned_content = re.sub(r"\[.*?\]", "", cleaned_content)
+
+    if global_config.response_splitter.split_mode != "llm":
+        cleaned_content = re.sub(r"\[.*?\]", "", cleaned_content)
+
     cleaned_content = re.sub(r"@<[^>]*>", "", cleaned_content)
 
     if cleaned_content != original_content.strip():
