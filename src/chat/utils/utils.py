@@ -450,9 +450,12 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     protected_text, special_blocks_mapping = protect_special_blocks(protected_text)
 
     # 提取被 () 或 [] 或 （）包裹且包含中文的内容
-    pattern = re.compile(r"[(\[（](?=.*[一-鿿]).+?[)\]）]")
-    _extracted_contents = pattern.findall(protected_text)
-    cleaned_text = pattern.sub("", protected_text)
+    if global_config.response_splitter.split_mode != "llm":
+        pattern = re.compile(r"[(\[（](?=.*[一-鿿]).+?[)\]）]")
+        _extracted_contents = pattern.findall(protected_text)
+        cleaned_text = pattern.sub("", protected_text)
+    else:
+        cleaned_text = protected_text
 
     if cleaned_text.strip() == "":
         # 如果清理后只剩下特殊块，直接恢复并返回
