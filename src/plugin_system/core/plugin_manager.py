@@ -130,8 +130,8 @@ class PluginManager:
                 logger.error(f"插件 {plugin_name} 实例化失败")
                 return False, 1
 
-            # 检查插件是否启用
-            if not plugin_instance.enable_plugin:
+            # 检查插件是否启用（使用 _is_enabled，因为它已经从配置文件同步更新）
+            if not plugin_instance._is_enabled:
                 logger.info(f"插件 {plugin_name} 已禁用，跳过加载")
                 return False, 0
 
