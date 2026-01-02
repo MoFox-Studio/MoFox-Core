@@ -372,7 +372,7 @@ def protect_special_blocks(text: str) -> tuple[str, dict[str, str]]:
         matches = re.findall(general_pattern, text)
         for match in matches:
             # 避免将包含占位符的片段或者LLM分割标记再次保护
-            if "__SPECIAL_" in match or global_config.response_splitter.split_mode == "llm" and match == "[SPLIT]":
+            if "__SPECIAL_" in match:
                 continue
 
             placeholder = f"__SPECIAL_GENERAL_{placeholder_idx}__"
@@ -439,30 +439,34 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     if not global_config.response_post_process.enable_response_post_process:
         return [text]
 
-    # --- 三层防护系统 ---
-    # 第一层：保护颜文字
-    protected_text, kaomoji_mapping = protect_kaomoji(text) if global_config.response_splitter.enable_kaomoji_protection else (text, {})
+    special_blocks_mapping = {}
+    quote_mapping = {}
+    kaomoji_mapping = {}
+    if global_config.response_splitter.enable and enable_splitter and global_config.response_splitter.split_mode == "llm":
+        cleaned_text = text
+    else:
+        # --- 三层防护系统 ---
+        # 只在按标点分割时启用
+        # 第一层：保护颜文字
+        protected_text, kaomoji_mapping = protect_kaomoji(text) if global_config.response_splitter.enable_kaomoji_protection else (text, {})
 
-    # 第二层：保护引号内容
-    protected_text, quote_mapping = protect_quoted_content(protected_text)
+        # 第二层：保护引号内容
+        protected_text, quote_mapping = protect_quoted_content(protected_text)
 
-    # 第三层：保护数学公式和代码块
-    protected_text, special_blocks_mapping = protect_special_blocks(protected_text)
+        # 第三层：保护数学公式和代码块
+        protected_text, special_blocks_mapping = protect_special_blocks(protected_text)
 
-    # 提取被 () 或 [] 或 （）包裹且包含中文的内容
-    if global_config.response_splitter.split_mode != "llm":
+        # 提取被 () 或 [] 或 （）包裹且包含中文的内容
         pattern = re.compile(r"[(\[（](?=.*[一-鿿]).+?[)\]）]")
         _extracted_contents = pattern.findall(protected_text)
         cleaned_text = pattern.sub("", protected_text)
-    else:
-        cleaned_text = protected_text
 
-    if cleaned_text.strip() == "":
-        # 如果清理后只剩下特殊块，直接恢复并返回
-        if special_blocks_mapping:
-             recovered = recover_special_blocks([protected_text], special_blocks_mapping)
-             return recover_kaomoji(recovered, kaomoji_mapping)
-        return ["呃呃"]
+        if cleaned_text.strip() == "":
+            # 如果清理后只剩下特殊块，直接恢复并返回
+            if special_blocks_mapping:
+                 recovered = recover_special_blocks([protected_text], special_blocks_mapping)
+                 return recover_kaomoji(recovered, kaomoji_mapping)
+            return ["呃呃"]
 
     logger.debug(f"{text}去除括号处理后的文本: {cleaned_text}")
 
@@ -541,11 +545,12 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
 
         logger.info(f"智能合并完成，最终消息数量: {len(sentences)}")
 
-    # --- 恢复所有被保护的内容 ---
-    sentences = recover_special_blocks(sentences, special_blocks_mapping)
-    sentences = recover_quoted_content(sentences, quote_mapping)
-    if global_config.response_splitter.enable_kaomoji_protection:
-        sentences = recover_kaomoji(sentences, kaomoji_mapping)
+    if not global_config.response_splitter.enable or not enable_splitter or global_config.response_splitter.split_mode != "llm":
+        # --- 恢复所有被保护的内容 ---
+        sentences = recover_special_blocks(sentences, special_blocks_mapping)
+        sentences = recover_quoted_content(sentences, quote_mapping)
+        if global_config.response_splitter.enable_kaomoji_protection:
+            sentences = recover_kaomoji(sentences, kaomoji_mapping)
 
     return sentences
 
