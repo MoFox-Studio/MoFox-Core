@@ -20,6 +20,8 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+from src.chat.utils.prompt_component_manager import prompt_component_manager
+from src.chat.utils.prompt_params import PromptParameters
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.plugin_system.base.component_types import ActionInfo
@@ -283,7 +285,10 @@ def _get_default_actions_block() -> str:
 # 模块5: 表达与输出格式 - 回复风格 + JSON格式
 # ============================================================
 
-def build_output_module(context_data: dict[str, str] | None = None) -> str:
+async def build_output_module(
+    params: PromptParameters,
+    context_data: dict[str, str] | None = None
+) -> str:
     """
     构建输出格式模块
 
@@ -291,6 +296,7 @@ def build_output_module(context_data: dict[str, str] | None = None) -> str:
     这部分定义了"怎么说"和"输出什么格式"
 
     Args:
+        params: 提示词参数
         context_data: S4U 上下文数据（包含 expression_habits）
     """
     if global_config is None:
@@ -300,6 +306,13 @@ def build_output_module(context_data: dict[str, str] | None = None) -> str:
 
     reply_style = global_config.personality.reply_style or ""
     expression_habits = context_data.get("expression_habits", "")
+
+    # --- 注入点支持 (注入点名称: kfc_style_prompt) ---
+    reply_style = await prompt_component_manager.apply_injections(
+        target_prompt_name="kfc_style_prompt",
+        original_template=reply_style,
+        params=params
+    )
 
     # JSON 输出格式说明（更自然的思考引导）
     json_format = """### 输出格式（JSON）
@@ -365,7 +378,7 @@ def build_output_module(context_data: dict[str, str] | None = None) -> str:
 # 组装完整的 System Prompt（复刻旧版）
 # ============================================================
 
-def build_system_prompt(
+async def build_system_prompt(
     session: KokoroSession,
     available_actions: dict[str, ActionInfo] | None = None,
     context_data: dict[str, str] | None = None,
@@ -427,10 +440,8 @@ def build_system_prompt(
             "",
             "## 5. 现在的情况",
             build_context_module(session, chat_stream, context_data),
-            "",
-            "## 6. 怎么回复",
-            build_output_module(context_data),
         ])
+
     else:
         # 没有自定义决策时，动作能力直接跟在规则后面
         modules.extend([
@@ -440,12 +451,38 @@ def build_system_prompt(
             "",
             "## 4. 现在的情况",
             build_context_module(session, chat_stream, context_data),
-            "",
-            "## 5. 怎么回复",
-            build_output_module(context_data),
         ])
 
-    return "\n".join(modules)
+    # --- 注入点支持 ---
+    # 构建注入参数
+    params = PromptParameters(
+        chat_id=chat_stream.stream_id if chat_stream else session.stream_id,
+        platform=chat_stream.platform if chat_stream else "unknown",
+        user_id=session.user_id,
+        sender=chat_stream.user_info.user_nickname if chat_stream and chat_stream.user_info else "用户",
+        is_group_chat=bool(chat_stream and chat_stream.group_info),
+    )
+
+    # 组装输出模块（需要异步调用以支持注入）
+    output_module = await build_output_module(params, context_data)
+    
+    # 添加输出模块到列表
+    modules.extend([
+        "",
+        f"## {5 if not custom_decision_block else 6}. 怎么回复",
+        output_module,
+    ])
+
+    base_template = "\n".join(modules)
+
+    # 应用注入规则 (注入点名称: kfc_unified_prompt)
+    final_prompt = await prompt_component_manager.apply_injections(
+        target_prompt_name="kfc_unified_prompt",
+        original_template=base_template,
+        params=params
+    )
+
+    return final_prompt
 
 
 # ============================================================
