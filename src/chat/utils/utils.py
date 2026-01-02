@@ -933,7 +933,10 @@ def filter_system_format_content(content: str | None) -> str:
             cleaned_content = re.sub(r"^(，|,)说：", "", cleaned_content).strip()
 
 
-    if global_config.response_splitter.split_mode != "llm":
+    if global_config.response_splitter.split_mode == "llm":
+        # 使用 LLM 分割时，排除 [SPLIT]
+        cleaned_content = re.sub(r"\[(?!SPLIT])[^]]*?]", "", cleaned_content)
+    else:
         cleaned_content = re.sub(r"\[.*?\]", "", cleaned_content)
 
     cleaned_content = re.sub(r"@<[^>]*>", "", cleaned_content)
