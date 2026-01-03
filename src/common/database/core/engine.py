@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from src.common.logger import get_logger
 
@@ -95,6 +96,12 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
 
     Returns:
         (url, engine_kwargs) 元组
+
+    Note:
+        SQLite 使用 NullPool 而非默认的 QueuePool，原因：
+        1. SQLite 是文件锁定型数据库，不适合长连接池
+        2. NullPool 每次请求创建新连接，用完即释放，避免连接池耗尽
+        3. 配合 WAL 模式和 busy_timeout，可以很好地处理并发读写
     """
     if not os.path.isabs(config.sqlite_path):
         ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -110,13 +117,18 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
     engine_kwargs = {
         "echo": False,
         "future": True,
+        # 使用 NullPool 避免连接池耗尽问题
+        # SQLite 不适合使用 QueuePool，因为它是单文件数据库
+        # 每次请求创建新连接，用完即释放
+        "poolclass": NullPool,
         "connect_args": {
             "check_same_thread": False,
-            "timeout": 60,
+            # 增加 timeout，让 SQLite 在遇到锁时等待更长时间
+            "timeout": 120,
         },
     }
 
-    logger.debug(f"SQLite配置: {db_path}")
+    logger.debug(f"SQLite配置: {db_path} (使用 NullPool)")
     return url, engine_kwargs
 
 
@@ -207,8 +219,9 @@ async def _enable_sqlite_optimizations(engine: AsyncEngine):
             await conn.execute(text("PRAGMA synchronous = NORMAL"))
             # 启用外键约束
             await conn.execute(text("PRAGMA foreign_keys = ON"))
-            # 设置busy_timeout，避免锁定错误
-            await conn.execute(text("PRAGMA busy_timeout = 10000"))
+            # 设置busy_timeout（毫秒），遇到锁时等待更长时间，避免 "database is locked" 错误
+            # 120秒与连接配置的 timeout 保持一致
+            await conn.execute(text("PRAGMA busy_timeout = 120000"))
             # 设置缓存大小（10MB）
             await conn.execute(text("PRAGMA cache_size = -10000"))
             # 临时存储使用内存

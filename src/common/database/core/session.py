@@ -67,7 +67,8 @@ async def _apply_session_settings(session: AsyncSession, db_type: str) -> None:
     try:
         if db_type == "sqlite":
             # SQLite 特定的 PRAGMA 设置
-            await session.execute(text("PRAGMA busy_timeout = 60000"))
+            # 设置 busy_timeout 与引擎配置一致（120秒）
+            await session.execute(text("PRAGMA busy_timeout = 120000"))
             await session.execute(text("PRAGMA foreign_keys = ON"))
         elif db_type == "postgresql":
             # PostgreSQL 特定设置（如果需要）
