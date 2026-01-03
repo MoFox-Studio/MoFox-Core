@@ -152,15 +152,34 @@ class KokoroFlowChatter(BaseChatter):
                 # 7. 加载可用动作（通过 ActionModifier 过滤）
                 from src.chat.planner_actions.action_modifier import ActionModifier
 
-                action_modifier = ActionModifier(self.action_manager, self.stream_id)
-                await action_modifier.modify_actions(chatter_name="KokoroFlowChatter")
-                available_actions = self.action_manager.get_using_actions()
+                # 检查是否处于极速模式
+                is_fast_mode = self._config.fast_mode_enabled
+
+                if is_fast_mode:
+                    logger.info(f"[KFC] {self.stream_id} 处于极速模式，跳过动作筛选和记忆判官")
+                    # 极速模式下，直接加载动作，不进行 modify_actions (跳过 LLM 判定)
+                    await self.action_manager.load_actions(self.stream_id)
+                    available_actions = self.action_manager.get_using_actions()
+                else:
+                    action_modifier = ActionModifier(self.action_manager, self.stream_id)
+                    await action_modifier.modify_actions(chatter_name="KokoroFlowChatter")
+                    available_actions = self.action_manager.get_using_actions()
 
                 # 8. 获取聊天流
                 chat_stream = await self._get_chat_stream()
 
                 # 9. 根据模式调用对应的生成器
-                if self._mode == KFCMode.UNIFIED:
+                if is_fast_mode:
+                    # 极速模式强制使用统一模式（单次调用）
+                    plan_response = await self._execute_unified_mode(
+                        session=session,
+                        user_name=user_name,
+                        situation_type=situation_type,
+                        chat_stream=chat_stream,
+                        available_actions=available_actions,
+                        fast_mode=True,
+                    )
+                elif self._mode == KFCMode.UNIFIED:
                     plan_response = await self._execute_unified_mode(
                         session=session,
                         user_name=user_name,
@@ -291,6 +310,7 @@ class KokoroFlowChatter(BaseChatter):
         situation_type: str,
         chat_stream,
         available_actions,
+        fast_mode: bool = False,
     ):
         """
         统一模式：单次 LLM 调用完成思考 + 回复生成
@@ -306,6 +326,7 @@ class KokoroFlowChatter(BaseChatter):
             situation_type=situation_type,
             chat_stream=chat_stream,
             available_actions=available_actions,
+            fast_mode=fast_mode,
         )
 
         # 统一模式下 content 已经在 actions 中，无需注入
