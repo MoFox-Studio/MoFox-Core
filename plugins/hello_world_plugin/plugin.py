@@ -96,7 +96,7 @@ class KeywordActivationExampleAction(BaseAction):
         return await self._keyword_match(
             chat_content,
             keywords=["你好", "hello", "hi", "嗨"],
-            case_sensitive=False  # 不区分大小写
+            case_sensitive=False,  # 不区分大小写
         )
 
     async def execute(self) -> tuple[bool, str]:
@@ -126,7 +126,7 @@ class LLMJudgeExampleAction(BaseAction):
 
 如果用户表达了上述情绪或需求，回答"是"，否则回答"否"。
             """,
-            llm_judge_model=llm_judge_model
+            llm_judge_model=llm_judge_model,
         )
 
     async def execute(self) -> tuple[bool, str]:
@@ -192,7 +192,11 @@ class WeatherPrompt(BasePrompt):
 
     prompt_name = "weather_info_prompt"
     prompt_description = "向Planner注入当前天气信息，以丰富对话上下文。"
-    injection_rules: ClassVar[list[InjectionRule]] = [InjectionRule(target_prompt="planner_prompt", injection_type=InjectionType.REPLACE, target_content="## 可用动作列表")]
+    injection_rules: ClassVar[list[InjectionRule]] = [
+        InjectionRule(
+            target_prompt="planner_prompt", injection_type=InjectionType.REPLACE, target_content="## 可用动作列表"
+        )
+    ]
 
     async def execute(self) -> str:
         # 在实际应用中，这里可以调用天气API
@@ -226,16 +230,78 @@ class HelloWorldPlugin(BasePlugin):
 
     config_schema: ClassVar = {
         "meta": {
-            "config_version": ConfigField(type=int, default=1, description="配置文件版本，请勿手动修改。"),
+            "config_version": ConfigField(
+                type=int,
+                default=1,
+                description="配置文件版本，请勿手动修改。",
+                hidden=True,  # 在 UI 中隐藏
+            ),
         },
         "greeting": {
             "message": ConfigField(
-                type=str, default="这是来自配置文件的问候！👋", description="HelloCommand 使用的问候语。"
+                type=str,
+                default="这是来自配置文件的问候！👋",
+                description="HelloCommand 使用的问候语。",
+                label="问候消息",
+                placeholder="输入自定义问候语...",
+                hint="此消息将在用户使用 /hello 命令时显示",
+                icon="waving_hand",
+                input_type="textarea",
+                rows=3,
+                max_length=200,
+                order=1,
+            ),
+            "use_custom_emoji": ConfigField(
+                type=bool,
+                default=False,
+                description="是否在问候语末尾添加自定义表情",
+                label="启用自定义表情",
+                icon="sentiment_satisfied",
+                order=2,
+            ),
+            "custom_emoji": ConfigField(
+                type=str,
+                default="😊",
+                description="自定义表情符号",
+                label="自定义表情",
+                placeholder="输入一个表情",
+                depends_on="use_custom_emoji",  # 仅当启用自定义表情时显示
+                depends_value=True,
+                max_length=10,
+                order=3,
             ),
         },
         "components": {
-            "hello_command_enabled": ConfigField(type=bool, default=True, description="是否启用 /hello 命令。"),
-            "random_emoji_action_enabled": ConfigField(type=bool, default=True, description="是否启用随机表情动作。"),
+            "hello_command_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用 /hello 命令。",
+                label="启用 Hello 命令",
+                icon="terminal",
+                order=1,
+            ),
+            "random_emoji_action_enabled": ConfigField(
+                type=bool,
+                default=True,
+                description="是否启用随机表情动作。",
+                label="启用随机表情",
+                icon="mood",
+                order=2,
+            ),
+            "emoji_probability": ConfigField(
+                type=float,
+                default=0.1,
+                description="随机表情触发的概率 (0-1)",
+                label="触发概率",
+                input_type="slider",
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                icon="casino",
+                depends_on="random_emoji_action_enabled",
+                depends_value=True,
+                order=3,
+            ),
         },
     }
 

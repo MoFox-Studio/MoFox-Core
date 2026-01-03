@@ -59,7 +59,7 @@ class UnifiedPromptGenerator:
 
         使用 prompt_modules.build_system_prompt() 构建模块化的提示词
         """
-        return prompt_modules.build_system_prompt(
+        return await prompt_modules.build_system_prompt(
             session=session,
             available_actions=available_actions,
             context_data=context_data,
