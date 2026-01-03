@@ -132,16 +132,13 @@ class RelationshipFetcher:
             relationship = await get_user_relationship(user_id=user_id)
 
             if relationship:
-                # 将SQLAlchemy对象转换为字典
+                # 将SQLAlchemy对象转换为字典（只保留核心字段）
                 try:
                     rel_data = {
                         "user_aliases": relationship.__dict__.get("user_aliases"),
-                        "relationship_text": relationship.__dict__.get("relationship_text"),
                         "impression_text": relationship.__dict__.get("impression_text"),
-                        "preference_keywords": relationship.__dict__.get("preference_keywords"),
-                        "key_facts": relationship.__dict__.get("key_facts"),
+                        "relationship_text": relationship.__dict__.get("relationship_text"),  # 兼容回退
                         "relationship_score": relationship.__dict__.get("relationship_score"),
-                        "relationship_stage": relationship.__dict__.get("relationship_stage"),
                         "first_met_time": relationship.__dict__.get("first_met_time"),
                     }
                 except Exception as attr_error:
@@ -155,10 +152,10 @@ class RelationshipFetcher:
                         aliases_str = "、".join(aliases_list)
                         relation_parts.append(f"{person_name}的别名有：{aliases_str}")
 
-                # 2. 关系阶段和好感度
+                # 2. 关系阶段和好感度（关系阶段从分数实时计算）
                 if rel_data.get("relationship_score") is not None:
                     score = rel_data["relationship_score"]
-                    stage = rel_data.get("relationship_stage") or self._get_stage_from_score(score)
+                    stage = self._get_stage_from_score(score)
                     stage_desc = self._get_stage_description(stage)
                     relation_parts.append(f"你和{person_name}的关系：{stage_desc}（好感度{score:.2f}）")
 
@@ -168,39 +165,12 @@ class RelationshipFetcher:
                     first_met = datetime.fromtimestamp(rel_data["first_met_time"]).strftime("%Y年%m月")
                     relation_parts.append(f"你们从{first_met}开始认识")
 
-                # 4. 长期印象（优先使用新字段 impression_text，回退到 relationship_text）
+                # 4. 印象描述（优先使用 impression_text，兼容回退到 relationship_text）
                 impression = rel_data.get("impression_text") or rel_data.get("relationship_text")
                 if impression:
                     relation_parts.append(f"\n你对{person_name}的印象：\n{impression}")
 
-                # 5. 用户偏好关键词（仅显示真实兴趣爱好）
-                if rel_data.get("preference_keywords"):
-                    keywords_list = [kw.strip() for kw in rel_data["preference_keywords"].split(",") if kw.strip()]
-                    # 过滤掉明显不是兴趣爱好的词
-                    filtered_keywords = []
-                    for kw in keywords_list:
-                        kw_lower = kw.lower()
-                        # 排除聊天互动、情感需求等不是真实兴趣的词汇
-                        if not any(excluded in kw_lower for excluded in [
-                            "亲亲", "撒娇", "被宠", "被夸", "聊天", "互动", "关心", "专注", "需要"
-                        ]):
-                            filtered_keywords.append(kw)
-
-                    if filtered_keywords:
-                        keywords_str = "、".join(filtered_keywords)
-                        relation_parts.append(f"\n{person_name}的兴趣爱好：{keywords_str}")
-
-                # 6. 关键信息 - 暂时隐藏，防止显示不准确的推测信息
-                # if rel_data.get("key_facts"):
-                #     try:
-                #         import orjson
-                #         facts = orjson.loads(rel_data["key_facts"])
-                #         if facts and isinstance(facts, list):
-                #             facts_lines = self._format_key_facts(facts, person_name)
-                #             if facts_lines:
-                #                 relation_parts.append(f"\n你记住的关于{person_name}的重要信息：\n{facts_lines}")
-                #     except Exception:
-                #         pass
+                # 注：preference_keywords 和 key_facts 字段已废弃，不再读取显示
 
         except Exception as e:
             logger.error(f"查询UserRelationships表失败: {e}")
@@ -379,27 +349,6 @@ class RelationshipFetcher:
             "bestie": "挚友",
         }
         return stage_map.get(stage, "未知关系")
-
-    def _format_key_facts(self, facts: list, person_name: str) -> str:
-        """格式化关键信息列表"""
-        type_names = {
-            "birthday": "生日",
-            "job": "工作",
-            "location": "所在地",
-            "dream": "理想",
-            "family": "家庭",
-            "pet": "宠物",
-            "other": "其他"
-        }
-        lines = []
-        for fact in facts:
-            if isinstance(fact, dict):
-                fact_type = fact.get("type", "other")
-                value = fact.get("value", "")
-                type_name = type_names.get(fact_type, "其他")
-                if value:
-                    lines.append(f"• {type_name}：{value}")
-        return "\n".join(lines)
 
     async def _build_fetch_query(self, person_id, target_message, chat_history):
         nickname_str = ",".join(global_config.bot.alias_names)
