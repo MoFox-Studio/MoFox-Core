@@ -137,6 +137,7 @@ class KokoroFlowChatter(BaseChatter):
                     await self.session_manager.save_session(user_id)
 
                 # 6. 记录用户消息到 mental_log
+                messages_added_count = 0
                 for msg in unread_messages:
                     msg_content = msg.processed_plain_text or msg.display_message or ""
                     msg_user_name = msg.user_info.user_nickname if msg.user_info else user_name
@@ -148,6 +149,7 @@ class KokoroFlowChatter(BaseChatter):
                         user_id=msg_user_id,
                         timestamp=msg.time,
                     )
+                    messages_added_count += 1
 
                 # 7. 加载可用动作（通过 ActionModifier 过滤）
                 from src.chat.planner_actions.action_modifier import ActionModifier
@@ -229,22 +231,84 @@ class KokoroFlowChatter(BaseChatter):
                     logger.debug(f"[KFC] 执行第 {idx}/{len(plan_response.actions)} 个动作: {action.type}")
                     action_data = action.params.copy()
 
-                    result = await self.action_manager.execute_action(
-                        action_name=action.type,
-                        chat_id=self.stream_id,
-                        target_message=target_message,
-                        reasoning=plan_response.thought,
-                        action_data=action_data,
-                        thinking_id=None,
-                        log_prefix="[KFC]",
-                    )
-                    logger.debug(f"[KFC] 动作 {action.type} 执行结果: success={result.get('success')}, reply_text={result.get('reply_text', '')[:50]}")
-                    exec_results.append(result)
-                    if result.get("success") and action.type in ("kfc_reply", "respond"):
-                        has_reply = True
-                        reply_text = (result.get("reply_text") or "").strip()
-                        if reply_text:
+                    try:
+                        result = await self.action_manager.execute_action(
+                            action_name=action.type,
+                            chat_id=self.stream_id,
+                            target_message=target_message,
+                            reasoning=plan_response.thought,
+                            action_data=action_data,
+                            thinking_id=None,
+                            log_prefix="[KFC]",
+                        )
+                        logger.debug(f"[KFC] 动作 {action.type} 执行结果: success={result.get('success')}, reply_text={result.get('reply_text', '')[:50]}")
+                        exec_results.append(result)
+                        if result.get("success") and action.type in ("kfc_reply", "respond"):
+                            has_reply = True
+                            reply_text = (result.get("reply_text") or "").strip()
+                            # 始终更新内容以反映实际发送情况（包括因打断导致的部分发送或未发送）
                             action.params["content"] = reply_text
+
+                    except BaseException as e:
+                        # 检查是否是打断异常 (KFCInterruptionError 现在继承自 BaseException 以穿透 action_manager)
+                        from .actions.reply import KFCInterruptionError
+                        
+                        # 显式检查类型
+                        if isinstance(e, KFCInterruptionError):
+                            logger.info(f"[KFC] 检测到打断: {e}")
+                            
+                            # 记录已发送的部分
+                            if action.type == "kfc_reply":
+                                action.params["content"] = e.partial_reply
+                                if e.partial_reply:
+                                    has_reply = True
+                            
+                            # 记录这次规划（包含已执行的部分）
+                            session.add_bot_planning(
+                                thought=plan_response.thought + " (发送过程中被新消息打断)",
+                                actions=[a.to_dict() for a in plan_response.actions[:idx]], # 只记录到当前执行的动作
+                                expected_reaction=plan_response.expected_reaction,
+                                max_wait_seconds=0, # 打断后立即处理新消息，不等待
+                            )
+                            
+                            # 13. 标记消息为已读
+                            for msg in unread_messages:
+                                context.mark_message_as_read(str(msg.message_id))
+                            
+                            # 提前保存 Session 并退出
+                            await self.session_manager.save_session(user_id)
+                            
+                            current_mode_str = "unified" if self._mode == KFCMode.UNIFIED else "split"
+                            return self._build_result(
+                                success=True,
+                                message="interrupted",
+                                has_reply=has_reply,
+                                thought=plan_response.thought,
+                                situation_type=situation_type,
+                                mode=current_mode_str,
+                            )
+                        
+                        elif isinstance(e, asyncio.CancelledError):
+                            # 任务被取消（LLM思考阶段被取消）
+                            logger.info("[KFC] 任务被取消 (Thinking Phase Interruption)")
+                            
+                            # 关键修复：如果在思考阶段被打断，必须回滚 mental_log 中新添加的消息
+                            # 因为这些消息仍然是 UNREAD 状态，下一次 execute 会再次读取它们。
+                            # 如果不回滚，mental_log 中会出现重复的消息记录。
+                            if 'messages_added_count' in locals() and messages_added_count > 0:
+                                if session and hasattr(session, "mental_log"):
+                                    if len(session.mental_log) >= messages_added_count:
+                                        session.mental_log = session.mental_log[:-messages_added_count]
+                                        logger.info(f"[KFC] 因打断回滚了 {messages_added_count} 条消息记录，等待下一次合并处理")
+                            
+                            # 保存回滚后的 Session (保持状态一致性)
+                            if 'user_id' in locals() and user_id:
+                                await self.session_manager.save_session(user_id)
+                            raise e
+                            
+                        else:
+                            # 其他异常正常抛出
+                            raise e
 
                 # 11. 记录 Bot 规划到 mental_log
                 session.add_bot_planning(

@@ -511,8 +511,7 @@ class ProactiveThinker:
                 )
                 if result.get("success") and action.type in ("kfc_reply", "respond"):
                     reply_text = (result.get("reply_text") or "").strip()
-                    if reply_text:
-                        action.params["content"] = reply_text
+                    action.params["content"] = reply_text
 
             # 🎯 只有真正发送了消息才增加追问计数（do_nothing 不算追问）
             has_reply_action = any(
@@ -760,8 +759,7 @@ class ProactiveThinker:
                 )
                 if result.get("success") and action.type in ("kfc_reply", "respond"):
                     reply_text = (result.get("reply_text") or "").strip()
-                    if reply_text:
-                        action.params["content"] = reply_text
+                    action.params["content"] = reply_text
 
             # 记录到 mental_log
             session.add_bot_planning(
