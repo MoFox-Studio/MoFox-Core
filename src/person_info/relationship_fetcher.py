@@ -145,12 +145,12 @@ class RelationshipFetcher:
                     logger.warning(f"访问relationship对象属性失败: {attr_error}")
                     rel_data = {}
 
-                # 1. 用户别名
-                if rel_data.get("user_aliases"):
-                    aliases_list = [alias.strip() for alias in rel_data["user_aliases"].split(",") if alias.strip()]
-                    if aliases_list:
-                        aliases_str = "、".join(aliases_list)
-                        relation_parts.append(f"{person_name}的别名有：{aliases_str}")
+                # 1. 用户别名 (已禁用)
+                # if rel_data.get("user_aliases"):
+                #     aliases_list = [alias.strip() for alias in rel_data["user_aliases"].split(",") if alias.strip()]
+                #     if aliases_list:
+                #         aliases_str = "、".join(aliases_list)
+                #         relation_parts.append(f"{person_name}的别名有：{aliases_str}")
 
                 # 2. 关系阶段和好感度（关系阶段从分数实时计算）
                 if rel_data.get("relationship_score") is not None:

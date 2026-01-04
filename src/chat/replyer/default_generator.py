@@ -1886,7 +1886,7 @@ class DefaultReplyer:
             # 获取 RelationshipFetcher 实例
             relationship_fetcher = relationship_fetcher_manager.get_fetcher(chat_id)
 
-            # 构建用户关系信息（包含别名、偏好关键词等新字段）
+            # 构建用户关系信息（包含偏好关键词等新字段，别名已禁用）
             user_relation_info = await relationship_fetcher.build_relation_info(person_id, points_num=5)
 
             # 构建聊天流印象信息
@@ -2036,8 +2036,8 @@ class DefaultReplyer:
                 "stream_id": stream.stream_id,
             }
 
-            if memory_aliases:
-                memory_context["user_aliases"] = memory_aliases
+            # if memory_aliases:
+            #     memory_context["user_aliases"] = memory_aliases
 
             if group_info_obj is not None:
                 group_name = getattr(group_info_obj, "group_name", None) or getattr(

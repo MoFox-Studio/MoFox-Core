@@ -43,25 +43,17 @@ class UserProfileTool(BaseTool):
     """
 
     name = "update_user_profile"
-    description = """记录对某个人的印象或别名。
+    description = """记录对某个人的印象。
 
-⚠️ 注意：请勿频繁调用！只有在印象发生显著变化，或有非常确定的新别名时才使用。
+⚠️ 注意：请勿频繁调用！只有在印象发生显著变化时才使用。
 
 使用场景：
-• 记录别名：仅限基于用户原名的变体（如简称、谐音），严禁随意起外号。
 • 更新印象：当对这个人的认知发生改变，或有深刻的新感受时（而不是每次聊天都更新）。
-
-别名严格规则：
-• ✓ 允许：基于原名的变体或简称
-• ✗ 禁止：完全无关的外号、临时玩笑、亲昵称呼（老公/老婆/宝贝）、身份敬语（大人/老师）
-• ⚠️ 必须基于 target_user_name，不能无中生有。
 
 后台异步执行，不影响回复。"""
     parameters = [
         ("target_user_id", ToolParamType.STRING, "目标用户的ID（必须）", True, None),
         ("target_user_name", ToolParamType.STRING, "目标用户的名字/昵称（必须）", True, None),
-        ("alias_operation", ToolParamType.STRING, "别名操作：add=新增 / remove=删除 / replace=全部替换（可选）", False, None),
-        ("alias_value", ToolParamType.STRING, "别名内容，多个用、分隔", False, None),
         ("impression_hint", ToolParamType.STRING, "你观察到的关于TA的要点（可选）", False, None),
     ]
     available_for_llm = True
@@ -90,24 +82,20 @@ class UserProfileTool(BaseTool):
                 }
 
             # 从LLM传入的参数
-            alias_operation = function_args.get("alias_operation", "")
-            alias_value = function_args.get("alias_value", "")
             impression_hint = function_args.get("impression_hint", "")
 
             # 如果LLM没有传入任何有效参数，返回提示
-            if not any([alias_value, impression_hint]):
+            if not impression_hint:
                 return {
                     "type": "info",
                     "id": target_user_id,
-                    "content": "提示：需要提供至少一项更新内容（别名或印象描述）"
+                    "content": "提示：需要提供印象描述"
                 }
 
             # 🎯 异步后台执行，不阻塞回复
             asyncio.create_task(self._background_update(
                 target_user_id=target_user_id,
                 target_user_name=str(target_user_name) if target_user_name else str(target_user_id),
-                alias_operation=alias_operation,
-                alias_value=alias_value,
                 impression_hint=impression_hint,
             ))
 
@@ -130,21 +118,12 @@ class UserProfileTool(BaseTool):
         self,
         target_user_id: str,
         target_user_name: str,
-        alias_operation: str,
-        alias_value: str,
         impression_hint: str,
     ):
         """后台执行用户画像更新"""
         try:
             # 从数据库获取现有用户画像
             existing_profile = await self._get_user_profile(target_user_id)
-
-            # 🎯 处理别名操作
-            final_aliases = self._process_list_operation(
-                existing_value=existing_profile.get("user_aliases", ""),
-                operation=alias_operation,
-                new_value=alias_value,
-            )
 
             # 获取最近的聊天记录
             chat_history_text = await self._get_recent_chat_history(target_user_id)
@@ -172,7 +151,6 @@ class UserProfileTool(BaseTool):
 
             # 构建最终画像（只包含核心字段）
             final_profile = {
-                "user_aliases": final_aliases,
                 "relationship_text": final_impression,
                 "relationship_score": new_score,
             }
@@ -183,40 +161,6 @@ class UserProfileTool(BaseTool):
         except Exception as e:
             logger.error(f"[后台] 用户画像更新失败: {e}")
 
-    def _process_list_operation(self, existing_value: str, operation: str, new_value: str) -> str:
-        """处理列表类型的操作（别名）
-
-        Args:
-            existing_value: 现有值（用、分隔）
-            operation: 操作类型 add/remove/replace
-            new_value: 新值（用、分隔）
-
-        Returns:
-            str: 处理后的值
-        """
-        if not new_value:
-            return existing_value
-
-        # 解析现有值和新值
-        existing_set = set(filter(None, [x.strip() for x in (existing_value or "").split("、")]))
-        new_set = set(filter(None, [x.strip() for x in new_value.split("、")]))
-
-        operation = (operation or "add").lower().strip()
-
-        if operation == "replace":
-            # 全部替换
-            result_set = new_set
-            logger.debug(f"别名替换: {existing_set} -> {new_set}")
-        elif operation == "remove":
-            # 删除指定项
-            result_set = existing_set - new_set
-            logger.debug(f"别名删除: {new_set} 从 {existing_set}")
-        else:  # add 或默认
-            # 新增（合并）
-            result_set = existing_set | new_set
-            logger.debug(f"别名新增: {new_set} 到 {existing_set}")
-
-        return "、".join(sorted(result_set))
 
     async def _get_recent_chat_history(self, target_user_id: str, max_messages: int = 50) -> str:
         """获取最近的聊天记录
@@ -487,7 +431,7 @@ class UserProfileTool(BaseTool):
                     impression = profile.relationship_text or ""
                     return {
                         "user_name": profile.user_name or user_id,
-                        "user_aliases": profile.user_aliases or "",
+                        "user_aliases": "",  # 禁用别名读取
                         "relationship_text": impression,
                         "relationship_score": float(profile.relationship_score) if profile.relationship_score is not None else _get_base_relationship_score(),
                         "first_met_time": profile.first_met_time,
@@ -532,10 +476,6 @@ class UserProfileTool(BaseTool):
                 score = profile.get("relationship_score", 0.3)
 
                 if existing:
-                    # 更新别名
-                    if profile.get("user_aliases"):
-                        existing.user_aliases = profile["user_aliases"]
-
                     # 更新 relationship_text 字段（印象）
                     impression = profile.get("relationship_text", "")
                     if impression:
@@ -553,7 +493,7 @@ class UserProfileTool(BaseTool):
                     new_profile = UserRelationships(
                         user_id=user_id,
                         user_name=user_id,
-                        user_aliases=profile.get("user_aliases", ""),
+                        # user_aliases="",
                         relationship_text=impression,
                         relationship_score=score,
                         first_met_time=current_time,

@@ -666,7 +666,7 @@ class UserRelationships(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(get_string_field(100), nullable=False, unique=True, index=True)
     user_name: Mapped[str | None] = mapped_column(get_string_field(100), nullable=True)
-    user_aliases: Mapped[str | None] = mapped_column(Text, nullable=True)  # 用户别名，逗号分隔
+    # user_aliases: Mapped[str | None] = mapped_column(Text, nullable=True)  # 用户别名，逗号分隔 (已废弃)
 
     # 印象相关（新旧兼容）
     relationship_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # 旧字段，保持兼容
