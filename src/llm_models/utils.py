@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 from datetime import datetime
@@ -147,20 +148,48 @@ class LLMUsageRecorder:
     LLM使用情况记录器（SQLAlchemy版本）
     """
 
-    async def record_usage_to_database(
+    def __init__(self):
+        self._queue: asyncio.Queue | None = None
+        self._worker_task: asyncio.Task | None = None
+
+    async def _ensure_worker(self):
+        """确保后台写入任务正在运行"""
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+
+        if self._worker_task is None or self._worker_task.done():
+            self._worker_task = asyncio.create_task(self._worker_loop())
+
+    async def _worker_loop(self):
+        """后台任务：串行处理数据库写入"""
+        while True:
+            try:
+                if self._queue is None:
+                    break
+
+                kwargs = await self._queue.get()
+                await self._write_to_db(**kwargs)
+                self._queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Token使用记录写入任务异常: {e!s}")
+                await asyncio.sleep(1)
+
+    async def _write_to_db(
         self,
         model_info: ModelInfo,
         model_usage: UsageRecord,
         user_id: str,
         request_type: str,
         endpoint: str,
-        time_cost: float = 0.0,
+        time_cost: float,
     ):
+        """实际执行数据库写入"""
         input_cost = (model_usage.prompt_tokens / 1000000) * model_info.price_in
         output_cost = (model_usage.completion_tokens / 1000000) * model_info.price_out
         total_cost = round(input_cost + output_cost, 6)
 
-        session = None
         try:
             # 使用 SQLAlchemy 会话创建记录
             async with get_db_session() as session:
@@ -177,7 +206,7 @@ class LLMUsageRecorder:
                     cost=total_cost,
                     time_cost=round(time_cost or 0.0, 3),
                     status="success",
-                    timestamp=datetime.now(),  # SQLAlchemy 会处理 DateTime 字段
+                    timestamp=datetime.now(),
                 )
 
                 session.add(usage_record)
@@ -191,6 +220,27 @@ class LLMUsageRecorder:
             )
         except Exception as e:
             logger.error(f"记录token使用情况失败: {e!s}")
+
+    async def record_usage_to_database(
+        self,
+        model_info: ModelInfo,
+        model_usage: UsageRecord,
+        user_id: str,
+        request_type: str,
+        endpoint: str,
+        time_cost: float = 0.0,
+    ):
+        """将使用记录添加到队列"""
+        await self._ensure_worker()
+        if self._queue:
+            await self._queue.put({
+                "model_info": model_info,
+                "model_usage": model_usage,
+                "user_id": user_id,
+                "request_type": request_type,
+                "endpoint": endpoint,
+                "time_cost": time_cost,
+            })
 
 
 llm_usage_recorder = LLMUsageRecorder()

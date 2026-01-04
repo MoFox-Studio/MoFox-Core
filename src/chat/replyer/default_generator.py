@@ -131,6 +131,7 @@ def init_prompt():
 
 {group_chat_reminder_block}
 - 在称呼用户时，请使用更自然的昵称或简称。对于长英文名，可使用首字母缩写；对于中文名，可提炼合适的简称。禁止直接复述复杂的用户名或输出用户名中的任何符号，让称呼更像人类习惯，注意，简称不是必须的，合理的使用。
+- 用户名格式说明：显示名称(辅助信息/用户ID)。例如 "张三(123456)" 或 "管理员(张三/123456)"。括号内为补充信息（如QQ昵称或ID），括号前为当前群聊中的主要称呼。
 你的回复应该是一条简短、且口语化的回复。
 
  --------------------------------
@@ -218,6 +219,7 @@ If you need to use the search tool, please directly call the function "lpmm_sear
 {safety_guidelines_block}
 {group_chat_reminder_block}
 - 在称呼用户时，请使用更自然的昵称或简称。对于长英文名，可使用首字母缩写；对于中文名，可提炼合适的简称。禁止直接复述复杂的用户名或输出用户名中的任何符号，让称呼更像人类习惯，注意，简称不是必须的，合理的使用。
+- 用户名格式说明：显示名称(辅助信息/用户ID)。例如 "张三(123456)" 或 "管理员(张三/123456)"。括号内为补充信息（如QQ昵称或ID），括号前为当前群聊中的主要称呼。
 你的回复应该是一条简短、且口语化的回复。
 
  --------------------------------
@@ -972,17 +974,46 @@ class DefaultReplyer:
                         platform = getattr(user_info, "platform", "") or getattr(msg, "platform", "")
                         user_id = getattr(user_info, "user_id", "") or getattr(msg, "user_id", "")
 
-                        # 获取用户名
+                        # 获取 person_name (备注名)
+                        person_name = None
                         if platform and user_id:
                             person_id = PersonInfoManager.get_person_id(platform, user_id)
                             person_info_manager = get_person_info_manager()
-                            sender_name = await person_info_manager.get_value(person_id, "person_name") or "未知用户"
+                            person_name = await person_info_manager.get_value(person_id, "person_name")
 
-                            # 检查是否是机器人自己，如果是则显示为（你）
-                            if user_id == str(global_config.bot.qq_account):
-                                sender_name = f"{global_config.bot.nickname}(你)"
+                        # user_info 可能是 dict 也可能是 object
+                        user_cardname = getattr(user_info, "user_cardname", None) or (user_info.get("user_cardname") if isinstance(user_info, dict) else None)
+                        user_nickname = getattr(user_info, "user_nickname", None) or (user_info.get("user_nickname") if isinstance(user_info, dict) else None)
+
+                        # 1. 尝试使用群名片作为主要显示名称
+                        display_name = user_cardname
+                        
+                        # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
+                        if not display_name:
+                            display_name = person_name or user_nickname or "某人"
+                            
+                        # 3. 构建辅助信息（括号内的内容）
+                        aux_info = []
+                        
+                        # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
+                        if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                            # 只有当昵称不太长时才显示，避免刷屏
+                            if len(user_nickname) < 10:
+                                aux_info.append(user_nickname)
+                                
+                        # 4. 添加 QQ 号（这是最稳定的标识符）
+                        if user_id != str(global_config.bot.qq_account):
+                            aux_info.append(user_id)
+                        
+                        # 5. 组合最终名称
+                        if aux_info:
+                            sender_name = f"{display_name}({'/'.join(aux_info)})"
                         else:
-                            sender_name = "未知用户"
+                            sender_name = display_name
+
+                        # 检查是否是机器人自己，如果是则显示为（你）
+                        if user_id == str(global_config.bot.qq_account):
+                            sender_name = f"{global_config.bot.nickname}(你)"
 
                         # 处理消息内容中的用户引用，确保bot回复在消息内容中也正确显示
                         from src.chat.utils.chat_message_builder import replace_user_references_async
@@ -1074,17 +1105,46 @@ class DefaultReplyer:
                 platform = user_info.get("platform") or msg.get("platform", "")
                 user_id = user_info.get("user_id") or msg.get("user_id", "")
 
-                # 获取用户名
+                # 获取 person_name (备注名)
+                person_name = None
                 if platform and user_id:
                     person_id = PersonInfoManager.get_person_id(platform, user_id)
                     person_info_manager = get_person_info_manager()
-                    sender_name = await person_info_manager.get_value(person_id, "person_name") or "未知用户"
+                    person_name = await person_info_manager.get_value(person_id, "person_name")
 
-                    # 检查是否是机器人自己，如果是则显示为（你）
-                    if user_id == str(global_config.bot.qq_account):
-                        sender_name = f"{global_config.bot.nickname}(你)"
+                # 从 user_info 字典中获取信息
+                user_cardname = user_info.get("user_cardname")
+                user_nickname = user_info.get("user_nickname")
+
+                # 1. 尝试使用群名片作为主要显示名称
+                display_name = user_cardname
+                
+                # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
+                if not display_name:
+                    display_name = person_name or user_nickname or "某人"
+                    
+                # 3. 构建辅助信息（括号内的内容）
+                aux_info = []
+                
+                # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
+                if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                    # 只有当昵称不太长时才显示，避免刷屏
+                    if len(user_nickname) < 10:
+                        aux_info.append(user_nickname)
+                        
+                # 4. 添加 QQ 号（这是最稳定的标识符）
+                if user_id != str(global_config.bot.qq_account):
+                    aux_info.append(user_id)
+                
+                # 5. 组合最终名称
+                if aux_info:
+                    sender_name = f"{display_name}({'/'.join(aux_info)})"
                 else:
-                    sender_name = "未知用户"
+                    sender_name = display_name
+
+                # 检查是否是机器人自己，如果是则显示为（你）
+                if user_id == str(global_config.bot.qq_account):
+                    sender_name = f"{global_config.bot.nickname}(你)"
 
                 # 处理消息内容中的用户引用，确保bot回复在消息内容中也正确显示
                 from src.chat.utils.chat_message_builder import replace_user_references_async

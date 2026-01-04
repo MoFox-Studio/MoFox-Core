@@ -76,25 +76,30 @@ class MessageHandler:
 
         # 构造用户信息
         sender_info = raw.get("sender", {})
-
-        (
-            msg_builder.direction("incoming")
-            .message_id(message_id)
-            .timestamp_ms(int(message_time * 1000))
-            .from_user(
-                user_id=str(sender_info.get("user_id", "")),
-                platform="qq",
-                nickname=sender_info.get("nickname", ""),
-                cardname=sender_info.get("card", ""),
-                user_avatar=sender_info.get("avatar", ""),
-            )
-        )
+        user_id = str(sender_info.get("user_id", ""))
+        nickname = sender_info.get("nickname", "")
+        cardname = sender_info.get("card", "")
+        avatar = sender_info.get("avatar", "")
 
         # 构造群组信息（如果是群消息）
         if message_type == "group":
             group_id = raw.get("group_id")
             if group_id:
                 fetched_group_info = await get_group_info(group_id)
+                # 尝试获取群成员信息以补充群名片
+                if user_id:
+                    try:
+                        member_info = await get_member_info(group_id=group_id, user_id=int(user_id))
+                        if member_info:
+                            # 优先使用获取到的群名片
+                            if member_info.get("card"):
+                                cardname = member_info.get("card")
+                            # 确保昵称也是最新的
+                            if member_info.get("nickname"):
+                                nickname = member_info.get("nickname")
+                    except Exception as e:
+                        logger.warning(f"获取群成员信息失败: {e}")
+
                 (
                     msg_builder.from_group(
                         group_id=str(group_id),
@@ -106,6 +111,19 @@ class MessageHandler:
                         ),
                     )
                 )
+
+        (
+            msg_builder.direction("incoming")
+            .message_id(message_id)
+            .timestamp_ms(int(message_time * 1000))
+            .from_user(
+                user_id=user_id,
+                platform="qq",
+                nickname=nickname,
+                cardname=cardname,
+                user_avatar=avatar,
+            )
+        )
 
         # 解析消息段
         message_segments = raw.get("message", [])

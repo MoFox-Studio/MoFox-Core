@@ -624,11 +624,26 @@ async def _build_readable_messages_internal(
             }
 
         user_info = msg.get("user_info", {})
+        
+        # 兼容性处理：如果 user_info 是对象而不是字典，使用 getattr
+        if hasattr(user_info, "to_dict"):
+            user_info = user_info.to_dict()
+        
         platform = user_info.get("platform")
+        if not platform and msg.get("platform"): # 回退到 msg 级别
+            platform = msg.get("platform")
+            
         user_id = user_info.get("user_id")
+        if not user_id and msg.get("user_id"): # 回退到 msg 级别
+            user_id = msg.get("user_id")
 
         user_nickname = user_info.get("user_nickname")
+        if not user_nickname and msg.get("user_nickname"): # 回退
+            user_nickname = msg.get("user_nickname")
+            
         user_cardname = user_info.get("user_cardname")
+        if not user_cardname and msg.get("user_cardname"): # 回退
+            user_cardname = msg.get("user_cardname")
 
         timestamp: float = msg.get("time")  # type: ignore
         content: str
@@ -660,18 +675,36 @@ async def _build_readable_messages_internal(
             person_info_manager = get_person_info_manager()
             person_name = await person_info_manager.get_value(person_id, "person_name")  # type: ignore
 
-        # 如果 person_name 未设置，则使用消息中的 nickname 或默认名称
-        if not person_name:
-            if user_cardname:
-                person_name = f"昵称：{user_cardname}"
-            elif user_nickname:
-                person_name = f"{user_nickname}"
-            else:
-                person_name = "某人"
+            # 修正逻辑：优先使用 user_cardname（群名片），其次是 person_name（备注名），最后是 user_nickname（QQ昵称）
 
-        # 在用户名后面添加 QQ 号, 但机器人本体不用
-        if user_id != str(global_config.bot.qq_account):
-            person_name = f"{person_name}({user_id})"
+            # 1. 尝试使用群名片作为主要显示名称
+            display_name = user_cardname
+
+            # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
+            if not display_name:
+                display_name = person_name or user_nickname or "某人"
+
+            # 3. 构建辅助信息（括号内的内容）
+            aux_info = []
+
+            # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
+            if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                # 只有当昵称不太长时才显示，避免刷屏
+                if len(user_nickname) < 10:
+                    aux_info.append(user_nickname)
+
+            # 如果主要显示的是群名片，且有不同的 person_name (备注名)，也考虑添加
+            # 但通常 person_name 和 cardname 是一样的，或者 cardname 更准确
+
+            # 4. 添加 QQ 号（这是最稳定的标识符）
+            if user_id != str(global_config.bot.qq_account):
+                aux_info.append(user_id)
+
+            # 5. 组合最终名称
+            if aux_info:
+                person_name = f"{display_name}({'/'.join(aux_info)})"
+            else:
+                person_name = display_name
 
         # 使用独立函数处理用户引用格式
         content = await replace_user_references_async(content, platform, replace_bot_name=replace_bot_name)

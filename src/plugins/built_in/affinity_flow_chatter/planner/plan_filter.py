@@ -523,7 +523,26 @@ class ChatterPlanFilter:
                     msg_time = time.strftime(
                         "%H:%M:%S", time.localtime(msg.get("time", time.time()))
                     )
-                    user_nickname = msg.get("user_nickname", "未知用户")
+                    # 构建显示名称: GroupCard(Nickname/ID)
+                    user_nickname = msg.get("user_nickname", "")
+                    user_cardname = msg.get("user_cardname", "")
+                    user_id = msg.get("user_id", "")
+                    
+                    display_name = user_cardname if user_cardname else (user_nickname if user_nickname else "未知用户")
+                    
+                    aux_info = []
+                    if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                        if len(user_nickname) < 10:
+                            aux_info.append(user_nickname)
+                    
+                    if user_id and user_id != str(global_config.bot.qq_account):
+                        aux_info.append(user_id)
+                        
+                    if aux_info:
+                        sender_name = f"{display_name}({'/'.join(aux_info)})"
+                    else:
+                        sender_name = display_name
+
                     msg_content = msg.get("processed_plain_text", "")
 
                     # 获取兴趣度信息并显示在提示词中
@@ -534,7 +553,7 @@ class ChatterPlanFilter:
 
                     # 在未读消息中显示兴趣度，让planner优先选择兴趣度高的消息
                     unread_lines.append(
-                        f"<{synthetic_id}> {msg_time} {user_nickname}: {msg_content}{interest_text}"
+                        f"<{synthetic_id}> {msg_time} {sender_name}: {msg_content}{interest_text}"
                     )
 
                 unread_history_block = "\n".join(unread_lines)
