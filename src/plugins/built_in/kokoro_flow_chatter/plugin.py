@@ -12,7 +12,7 @@ from src.plugin_system.base.base_plugin import BasePlugin
 from src.plugin_system.base.config_types import ConfigField
 
 from .chatter import KokoroFlowChatter
-from .config import KokoroFlowChatterConfig, get_config
+from .config import get_config
 from .proactive_thinker import start_proactive_thinker, stop_proactive_thinker
 
 logger = get_logger("kfc_plugin")

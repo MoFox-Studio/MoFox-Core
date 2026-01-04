@@ -241,6 +241,7 @@ class ChatStreamImpressionTool(BaseTool):
         try:
             import orjson
             from json_repair import repair_json
+
             from src.llm_models.utils_model import LLMRequest
 
             # 获取人设信息

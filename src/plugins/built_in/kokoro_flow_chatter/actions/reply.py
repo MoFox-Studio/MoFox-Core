@@ -217,7 +217,7 @@ class KFCReplyAction(BaseAction):
         """
         reply_text = ""
         first_sent = False
-        
+
         # 获取分段发送的间隔时间
         typing_delay = 0.5
         if global_config and hasattr(global_config, "response_splitter"):
@@ -253,7 +253,7 @@ class KFCReplyAction(BaseAction):
                     )
 
             return reply_text
-            
+
         except asyncio.CancelledError:
             # 如果被外部取消（如 Task.cancel()），也视为打断，保存当前进度
             logger.info(f"{self.log_prefix} 发送过程被强制取消，保存进度")
@@ -268,12 +268,12 @@ class KFCReplyAction(BaseAction):
             # 如果是 send_api 被取消，那这条可能没发成功。
             # 我们可以检查 reply_text 是否包含 segment。
             # 简化逻辑：直接抛出
-            
+
             # 计算未发送部分：从当前 i 开始（如果还没处理完）
             # 由于 enumerate scope 问题，我们需要在循环外访问 i？
             # Python loop 变量泄漏到外部 scope，但 try block 内部变量可能不一样。
             # 还是在 loop 内 try/except 比较好？不，loop 外 catch 更整洁。
-            
+
             # 由于我们无法准确知道 i 的值（除非在 loop 里更新 self.current_index），
             # 这里简单处理：若被强制取消，只返回已累积的 reply_text。
             # 剩下的丢弃？不，这正是用户不要的。
@@ -302,7 +302,7 @@ class KFCReplyAction(BaseAction):
         # 获取目标消息时间（我们正在回复的消息）
         target_time = 0.0
         target_id = ""
-        
+
         if self.action_message:
             if isinstance(self.action_message, dict):
                 target_time = float(self.action_message.get("time", 0.0) or 0.0)

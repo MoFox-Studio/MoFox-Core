@@ -201,7 +201,6 @@ def load_config() -> KokoroFlowChatterConfig:
 
     # --- 1. 从插件自身配置文件加载 ---
     try:
-        import os
         from pathlib import Path
 
         import tomlkit
