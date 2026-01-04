@@ -89,6 +89,11 @@ class KokoroFlowChatter(BaseChatter):
         mode_str = "统一模式" if self._mode == KFCMode.UNIFIED else "分离模式"
         logger.info(f"初始化完成 (模式: {mode_str}): stream_id={stream_id}")
 
+        # [Hack] 抑制 sqlalchemy.pool 在任务取消时产生的 "Exception closing connection" 噪音日志
+        # 这是由于 aiosqlite 连接在取消时无法优雅关闭导致的，属于已知无害错误
+        import logging
+        logging.getLogger("sqlalchemy.pool").setLevel(logging.CRITICAL)
+
     async def execute(self, context: StreamContext) -> dict:
         """
         执行聊天处理
