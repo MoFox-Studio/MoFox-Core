@@ -16,6 +16,7 @@ class DatabaseUserInfo(BaseDataModel):
     user_id: str = field(default_factory=str)  # 用户唯一标识 ID
     user_nickname: str = field(default_factory=str)  # 用户昵称
     user_cardname: str | None = None  # 用户备注名或群名片，可为空
+    role: str | None = None  # 群成员角色 (owner/admin/member)，可为空
 
     @classmethod
     def from_dict(cls, data: dict) -> "DatabaseUserInfo":
@@ -25,6 +26,7 @@ class DatabaseUserInfo(BaseDataModel):
             user_id=data.get("user_id", ""),
             user_nickname=data.get("user_nickname", ""),
             user_cardname=data.get("user_cardname"),
+            role=data.get("role"),
         )
 
     def to_dict(self) -> dict:
@@ -34,6 +36,7 @@ class DatabaseUserInfo(BaseDataModel):
             "user_id": self.user_id,
             "user_nickname": self.user_nickname,
             "user_cardname": self.user_cardname,
+            "role": self.role,
         }
 
 
@@ -161,6 +164,7 @@ class DatabaseMessages(BaseDataModel):
         user_id: str = "",
         user_nickname: str = "",
         user_cardname: str | None = None,
+        user_role: str | None = None, # 新增角色字段
         user_platform: str = "",
         # 群组 / 聊天上下文信息（用于构建 group_info / chat_info）
         chat_info_group_id: str | None = None,
@@ -215,6 +219,7 @@ class DatabaseMessages(BaseDataModel):
             user_id=user_id,
             user_nickname=user_nickname,
             user_cardname=user_cardname,
+            role=user_role,
             platform=user_platform,
         )
 
@@ -287,6 +292,7 @@ class DatabaseMessages(BaseDataModel):
             "user_id": self.user_info.user_id,
             "user_nickname": self.user_info.user_nickname,
             "user_cardname": self.user_info.user_cardname,
+            "user_role": self.user_info.role,
             "user_platform": self.user_info.platform,
             # group_info 展开（可能为 None）
             "chat_info_group_id": self.group_info.group_id if self.group_info else None,
@@ -371,7 +377,7 @@ class DatabaseMessages(BaseDataModel):
         "is_emoji", "is_picid", "is_command", "is_notify", "is_public_notice",
         "notice_type", "selected_expressions", "is_read", "actions",
         "should_reply", "should_act",
-        "user_id", "user_nickname", "user_cardname", "user_platform",
+        "user_id", "user_nickname", "user_cardname", "user_role", "user_platform",
         "chat_info_group_id", "chat_info_group_name", "chat_info_group_platform",
         "chat_info_user_id", "chat_info_user_nickname", "chat_info_user_cardname",
         "chat_info_user_platform", "chat_info_stream_id", "chat_info_platform",

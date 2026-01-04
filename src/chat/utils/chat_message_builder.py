@@ -644,6 +644,16 @@ async def _build_readable_messages_internal(
         user_cardname = user_info.get("user_cardname")
         if not user_cardname and msg.get("user_cardname"): # 回退
             user_cardname = msg.get("user_cardname")
+            
+        user_role = user_info.get("role")
+        if not user_role and msg.get("role"): # 回退
+            user_role = msg.get("role")
+        if not user_role and msg.get("user_role"): # 兼容 flatten 后的 key
+            user_role = msg.get("user_role")
+        
+        # 兼容 additional_config 中的 role (从 message_handler.py 注入)
+        if not user_role and "additional_config" in msg.get("message_info", {}):
+            user_role = msg["message_info"]["additional_config"].get("role")
 
         timestamp: float = msg.get("time")  # type: ignore
         content: str
@@ -679,12 +689,19 @@ async def _build_readable_messages_internal(
 
             # 1. 尝试使用群名片作为主要显示名称
             display_name = user_cardname
-
+            
             # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
             if not display_name:
                 display_name = person_name or user_nickname or "某人"
-
-            # 3. 构建辅助信息（括号内的内容）
+                
+            # 3. 处理群身份前缀
+            role_prefix = ""
+            if user_role == "owner":
+                role_prefix = "[群主]"
+            elif user_role == "admin":
+                role_prefix = "[管理员]"
+                
+            # 4. 构建辅助信息（括号内的内容）
             aux_info = []
 
             # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
@@ -702,9 +719,9 @@ async def _build_readable_messages_internal(
 
             # 5. 组合最终名称
             if aux_info:
-                person_name = f"{display_name}({'/'.join(aux_info)})"
+                person_name = f"{role_prefix}{display_name}({'/'.join(aux_info)})"
             else:
-                person_name = display_name
+                person_name = f"{role_prefix}{display_name}"
 
         # 使用独立函数处理用户引用格式
         content = await replace_user_references_async(content, platform, replace_bot_name=replace_bot_name)

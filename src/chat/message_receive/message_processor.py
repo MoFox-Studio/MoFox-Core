@@ -84,6 +84,7 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
     user_nickname = user_info_payload.get("user_nickname", "")
     user_cardname = user_info_payload.get("user_cardname")
     user_platform = user_info_payload.get("platform", "")
+    user_role = user_info_payload.get("role")  # Extract role
 
     # 提取群组信息
     group_info_payload: GroupInfoPayload | None = message_info.get("group_info")  # type: ignore
@@ -135,6 +136,7 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
         user_nickname=user_nickname,
         user_cardname=user_cardname,
         user_platform=user_platform,
+        user_role=user_role,
         chat_info_stream_id=stream_id,
         chat_info_platform=platform,
         chat_info_create_time=0.0,  # 将由 ChatStream 填充
