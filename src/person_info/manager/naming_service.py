@@ -106,8 +106,7 @@ class PersonNamingService:
             if len(current_name_set) < 50 and current_name_set:
                 qv_name_prompt += f"已知的其他昵称有: {', '.join(list(current_name_set)[:10])}等。\n"
 
-            qv_name_prompt += "请用json给出你的想法，并给出理由，示例如下："""{
-                \"nickname\": \"昵称\",\n                \"reason\": \"理由\"\n            }""""""
+            qv_name_prompt += "请用json给出你的想法，并给出理由，示例如下：{\"nickname\": \"昵称\", \"reason\": \"理由\"}"
             response, _ = await self.qv_name_llm.generate_response_async(qv_name_prompt)
             result = self._extract_json_from_text(response)
 
