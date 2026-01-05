@@ -155,21 +155,66 @@ class LLMUsageRecorder:
     async def _ensure_worker(self):
         """确保后台写入任务正在运行"""
         if self._queue is None:
-            self._queue = asyncio.Queue()
+            # 限制队列大小，避免内存无限增长
+            self._queue = asyncio.Queue(maxsize=1000)
 
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker_loop())
 
     async def _worker_loop(self):
         """后台任务：串行处理数据库写入"""
+        # 批处理配置
+        BATCH_SIZE = 10
+        BATCH_TIMEOUT = 5.0  # 秒
+
         while True:
             try:
                 if self._queue is None:
                     break
 
-                kwargs = await self._queue.get()
-                await self._write_to_db(**kwargs)
-                self._queue.task_done()
+                # 尝试获取第一条数据
+                batch = []
+                try:
+                    # 如果队列为空，这里会等待
+                    item = await self._queue.get()
+                    batch.append(item)
+                except asyncio.CancelledError:
+                    break
+
+                # 尝试获取更多数据以进行批处理（非阻塞）
+                start_time = asyncio.get_event_loop().time()
+                while len(batch) < BATCH_SIZE:
+                    timeout = max(0, BATCH_TIMEOUT - (asyncio.get_event_loop().time() - start_time))
+                    if timeout <= 0:
+                        break
+
+                    try:
+                        # 使用 wait_for 等待下一条数据，超时则直接处理当前批次
+                        item = await asyncio.wait_for(self._queue.get(), timeout=0.1)
+                        batch.append(item)
+                    except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                        # 没有更多数据了，或者超时了，处理当前批次
+                        break
+                    except asyncio.CancelledError:
+                        # 任务被取消
+                        raise
+
+                if not batch:
+                    continue
+
+                # 逐个写入（可以优化为批量写入，但目前为了保持接口兼容先串行）
+                # 即使是串行，这样也能减少 task 切换的开销
+                for kwargs in batch:
+                    try:
+                        await self._write_to_db(**kwargs)
+                    except Exception as e:
+                        logger.error(f"写入单条使用记录失败: {e!s}")
+                    finally:
+                        self._queue.task_done()
+
+                # 给其他任务一点喘息时间
+                await asyncio.sleep(0.01)
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -233,14 +278,21 @@ class LLMUsageRecorder:
         """将使用记录添加到队列"""
         await self._ensure_worker()
         if self._queue:
-            await self._queue.put({
-                "model_info": model_info,
-                "model_usage": model_usage,
-                "user_id": user_id,
-                "request_type": request_type,
-                "endpoint": endpoint,
-                "time_cost": time_cost,
-            })
+            try:
+                # 使用 put_nowait 防止阻塞调用者
+                # 如果队列满了（maxsize=1000），这里会抛出 QueueFull
+                self._queue.put_nowait({
+                    "model_info": model_info,
+                    "model_usage": model_usage,
+                    "user_id": user_id,
+                    "request_type": request_type,
+                    "endpoint": endpoint,
+                    "time_cost": time_cost,
+                })
+            except asyncio.QueueFull:
+                logger.warning("Token使用记录队列已满，丢弃当前记录以避免阻塞")
+            except Exception as e:
+                logger.error(f"添加使用记录到队列失败: {e!s}")
 
 
 llm_usage_recorder = LLMUsageRecorder()
