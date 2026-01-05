@@ -898,6 +898,10 @@ class LongTermMemoryManager:
             asyncio.create_task(  # noqa: RUF006
                 self.memory_manager._async_save_graph_store("合并记忆")
             )
+
+            # 4. 注册临时ID（如果存在），以便后续操作引用
+            self._register_temp_id(op.target_id, target_id, temp_id_map, force=True)
+
             logger.info(f"合并记忆完成: {source_ids} -> {target_id}")
         else:
             logger.error(f"合并记忆失败: {source_ids}")
