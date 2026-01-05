@@ -162,7 +162,7 @@ class UnifiedMemoryManager:
             await self.long_term_manager.initialize()
 
             self._initialized = True
-            logger.info("统一记忆管理器初始化完成")
+            logger.debug("统一记忆管理器初始化完成")
 
             # 启动自动转移任务
             self._start_auto_transfer_task()
@@ -261,7 +261,7 @@ class UnifiedMemoryManager:
 
                 # 步骤3: 如果不充足，检索长期记忆
                 if not judge_decision.is_sufficient:
-                    logger.info("判官判断记忆不足，开始检索长期记忆")
+                    logger.debug("判官判断记忆不足，开始检索长期记忆")
 
                     queries = [query_text, *judge_decision.additional_queries]
                     long_term_memories = await self._retrieve_long_term_memories(
@@ -604,7 +604,7 @@ class UnifiedMemoryManager:
                 if not batch:
                     continue
 
-                logger.info(
+                logger.debug(
                     f"短期记忆已满({len(batch)}/{max_memories})，开始整批转移到长期记忆"
                 )
                 result = await self.long_term_manager.transfer_from_short_term(batch)
@@ -652,7 +652,7 @@ class UnifiedMemoryManager:
                     result["transferred_memory_ids"]
                 )
 
-            logger.info(f"手动转移完成: {result}")
+            logger.debug(f"手动转移完成: {result}")
             return result
 
         except Exception as e:
@@ -705,7 +705,7 @@ class UnifiedMemoryManager:
                 await self.memory_manager.shutdown()
 
             self._initialized = False
-            logger.info("统一记忆管理器已关闭")
+            logger.debug("统一记忆管理器已关闭")
 
         except Exception as e:
             logger.error(f"关闭统一记忆管理器失败: {e}")

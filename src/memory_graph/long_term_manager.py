@@ -139,7 +139,7 @@ class LongTermMemoryManager:
                 batch_end = min(batch_start + self.batch_size, len(short_term_memories))
                 batch = short_term_memories[batch_start:batch_end]
 
-                logger.info(
+                logger.debug(
                     f"处理批次 {batch_start // self.batch_size + 1}/"
                     f"{(len(short_term_memories) - 1) // self.batch_size + 1} "
                     f"({len(batch)} 条记忆)"
@@ -817,7 +817,7 @@ class LongTermMemoryManager:
             memory.metadata["transferred_from_stm"] = source_stm.id
             memory.metadata["transfer_time"] = datetime.now().isoformat()
 
-            logger.info(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
+            logger.debug(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             # 这样即使 LLM 使用了中文描述作为 ID (如 "新创建的记忆"), 也能正确映射
             self._register_temp_id(op.target_id, memory.id, temp_id_map, force=True)
@@ -850,7 +850,7 @@ class LongTermMemoryManager:
         success = await self.memory_manager.update_memory(memory_id, **updates)
 
         if success:
-            logger.info(f"更新长期记忆: {memory_id}")
+            logger.debug(f"更新长期记忆: {memory_id}")
         else:
             logger.error(f"更新长期记忆失败: {memory_id}")
 
@@ -876,7 +876,12 @@ class LongTermMemoryManager:
         # 待合并记忆（将被删除的）
         memories_to_merge = source_ids[1:]
 
-        logger.info(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
+        if not memories_to_merge:
+            logger.debug(f"合并操作未指定源记忆，跳过实际合并: target={target_id}")
+            # 即使没有要合并的记忆，也可能需要更新元数据（例如 merged_content）
+            # 所以继续执行，但 merge_memories 调用会是空的
+        else:
+            logger.debug(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
 
         # 1. 调用 GraphStore 的合并功能（转移节点和边）
         merge_success = self.memory_manager.graph_store.merge_memories(target_id, memories_to_merge)
@@ -902,7 +907,7 @@ class LongTermMemoryManager:
             # 4. 注册临时ID（如果存在），以便后续操作引用
             self._register_temp_id(op.target_id, target_id, temp_id_map, force=True)
 
-            logger.info(f"合并记忆完成: {source_ids} -> {target_id}")
+            logger.debug(f"合并记忆完成: {source_ids} -> {target_id}")
         else:
             logger.error(f"合并记忆失败: {source_ids}")
 
@@ -933,7 +938,7 @@ class LongTermMemoryManager:
         if success:
             # 将embedding生成加入队列，批量处理
             await self._queue_embedding_generation(node_id, content)
-            logger.info(f"创建节点: {content} ({node_type}) -> {memory_id}")
+            logger.debug(f"创建节点: {content} ({node_type}) -> {memory_id}")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             self._register_temp_id(op.target_id, node_id, temp_id_map, force=True)
             self._register_aliases_from_params(
@@ -964,7 +969,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新节点: {node_id}")
+            logger.debug(f"更新节点: {node_id}")
         else:
             logger.error(f"更新节点失败: {node_id}")
 
@@ -991,7 +996,7 @@ class LongTermMemoryManager:
         for source_id in sources:
             self.memory_manager.graph_store.merge_nodes(source_id, target_id)
 
-        logger.info(f"合并节点: {sources} -> {target_id}")
+        logger.debug(f"合并节点: {sources} -> {target_id}")
 
     async def _execute_create_edge(
         self,
@@ -1078,7 +1083,7 @@ class LongTermMemoryManager:
         )
 
         if edge_id:
-            logger.info(f"创建边: {source_id} -> {target_id} ({relation})")
+            logger.debug(f"创建边: {source_id} -> {target_id} ({relation})")
         else:
             logger.error(f"创建边失败: {op}")
 
@@ -1102,7 +1107,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新边: {edge_id}")
+            logger.debug(f"更新边: {edge_id}")
         else:
             logger.error(f"更新边失败: {edge_id}")
 
@@ -1119,7 +1124,7 @@ class LongTermMemoryManager:
         success = self.memory_manager.graph_store.remove_edge(edge_id)
 
         if success:
-            logger.info(f"删除边: {edge_id}")
+            logger.debug(f"删除边: {edge_id}")
         else:
             logger.error(f"删除边失败: {edge_id}")
 
@@ -1277,7 +1282,7 @@ class LongTermMemoryManager:
                     self.memory_manager.graph_store
                 )
 
-            logger.info(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
+            logger.debug(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
             return {"decayed_count": decayed_count, "total_memories": len(all_memories)}
 
         except Exception as e:
