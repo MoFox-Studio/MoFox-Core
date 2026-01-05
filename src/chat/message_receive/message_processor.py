@@ -352,6 +352,28 @@ async def _process_single_segment(
                 return "[发了一个视频，但格式不支持]"
             else:
                 return ""
+        elif seg_type == "music":
+            # 处理音乐分享卡片
+            try:
+                if isinstance(seg_data, dict):
+                    # 尝试优先获取标题，其次是ID
+                    title = seg_data.get("title")
+                    music_id = seg_data.get("id")
+                    
+                    if title:
+                        return f"[分享音乐: {title}]"
+                    elif music_id:
+                        return f"[分享音乐, ID: {music_id}]"
+                    else:
+                        # 如果没有标准字段，尝试转储数据内容以便调试或作为后备
+                        return f"[分享音乐, 数据: {seg_data}]"
+
+                elif isinstance(seg_data, str):
+                     return f"[分享音乐, ID: {seg_data}]"
+            except Exception:
+                pass
+            return f"[分享音乐, 原始数据: {str(seg_data)}]"
+
         else:
             logger.warning(f"未知的消息段类型: {seg_type}")
             return f"[{seg_type} 消息]"

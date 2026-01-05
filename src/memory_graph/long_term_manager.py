@@ -651,23 +651,35 @@ class LongTermMemoryManager:
         try:
             success_count = 0
             temp_id_map: dict[str, str] = {}
+            active_memory_id: str | None = None
 
             for op in operations:
                 try:
                     if op.operation_type == GraphOperationType.CREATE_MEMORY:
                         await self._execute_create_memory(op, source_stm, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_MEMORY:
                         await self._execute_update_memory(op, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.MERGE_MEMORIES:
                         await self._execute_merge_memories(op, source_stm, temp_id_map)
+                        # 获取合并后的目标记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        source_ids = params.get("source_memory_ids", [])
+                        if source_ids:
+                            active_memory_id = source_ids[0]
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_NODE:
                         await self._execute_create_node(op, temp_id_map)
+                        # 更新当前上下文记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        if params.get("memory_id"):
+                            active_memory_id = params.get("memory_id")
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_NODE:
@@ -679,7 +691,9 @@ class LongTermMemoryManager:
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_EDGE:
-                        await self._execute_create_edge(op, temp_id_map)
+                        await self._execute_create_edge(
+                            op, temp_id_map, default_memory_id=active_memory_id
+                        )
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_EDGE:
@@ -976,7 +990,10 @@ class LongTermMemoryManager:
         logger.info(f"合并节点: {sources} -> {target_id}")
 
     async def _execute_create_edge(
-        self, op: GraphOperation, temp_id_map: dict[str, str]
+        self,
+        op: GraphOperation,
+        temp_id_map: dict[str, str],
+        default_memory_id: str | None = None,
     ) -> None:
         """执行创建边操作"""
         params = self._resolve_parameters(op.parameters, temp_id_map)
@@ -994,23 +1011,56 @@ class LongTermMemoryManager:
             logger.warning("创建边失败: 图存储未初始化")
             return
 
+        # 辅助函数：推断 memory_id
+        def _infer_memory_id(existing_node_id: str) -> str | None:
+            memories = self.memory_manager.graph_store.get_memories_by_node(existing_node_id)
+            if memories:
+                return memories[0].id
+            return None
+
         # 检查和创建节点（如果不存在则创建占位符）
         if not self.memory_manager.graph_store.graph.has_node(source_id):
-            logger.debug(f"源节点不存在，创建占位符节点: {source_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(target_id):
+                memory_id = _infer_memory_id(target_id)
+
+            if not memory_id:
+                logger.warning(f"源节点不存在且无法推断 memory_id，跳过创建: {source_id}")
+                return
+
+            logger.debug(f"源节点不存在，创建占位符节点: {source_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=source_id,
                 node_type="event",
                 content=f"临时节点 - {source_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         if not self.memory_manager.graph_store.graph.has_node(target_id):
-            logger.debug(f"目标节点不存在，创建占位符节点: {target_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(source_id):
+                memory_id = _infer_memory_id(source_id)
+
+            if not memory_id:
+                logger.warning(f"目标节点不存在且无法推断 memory_id，跳过创建: {target_id}")
+                return
+
+            logger.debug(f"目标节点不存在，创建占位符节点: {target_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=target_id,
                 node_type="event",
                 content=f"临时节点 - {target_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         # 现在两个节点都存在，可以创建边

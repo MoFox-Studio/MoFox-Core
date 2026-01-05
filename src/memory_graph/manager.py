@@ -257,7 +257,8 @@ class MemoryManager:
             if result["success"]:
                 memory_id = result["memory_id"]
                 memory = self.graph_store.get_memory_by_id(memory_id)
-                logger.info(f"记忆创建成功: {memory_id}")
+                # 降低非必要日志级别
+                logger.debug(f"记忆创建成功: {memory_id}")
                 return memory
             else:
                 logger.error(f"记忆创建失败: {result.get('error', 'Unknown error')}")
