@@ -151,7 +151,7 @@ class MessageHandler:
         msg_builder.seg_list(seg_list)
 
         envelope = msg_builder.build()
-        
+
         # 将 role 注入到 user_info 中 (如果不是普通成员)
         if role and role != "member":
             # 注入到 message_info.user_info
@@ -159,13 +159,13 @@ class MessageHandler:
                 user_info = envelope["message_info"]["user_info"]
                 if isinstance(user_info, dict):
                     user_info["role"] = role
-            
+
             # 同时也放入 additional_config 以防万一
             if "message_info" in envelope:
                 if "additional_config" not in envelope["message_info"]:
                     envelope["message_info"]["additional_config"] = {}
                 envelope["message_info"]["additional_config"]["role"] = role
-                
+
         return envelope
 
     async def handle_single_segment(

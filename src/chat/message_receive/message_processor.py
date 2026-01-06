@@ -359,7 +359,7 @@ async def _process_single_segment(
                     # 尝试优先获取标题，其次是ID
                     title = seg_data.get("title")
                     music_id = seg_data.get("id")
-                    
+
                     if title:
                         return f"[分享音乐: {title}]"
                     elif music_id:
@@ -372,7 +372,7 @@ async def _process_single_segment(
                      return f"[分享音乐, ID: {seg_data}]"
             except Exception:
                 pass
-            return f"[分享音乐, 原始数据: {str(seg_data)}]"
+            return f"[分享音乐, 原始数据: {seg_data!s}]"
 
         else:
             logger.warning(f"未知的消息段类型: {seg_type}")

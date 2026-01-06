@@ -988,31 +988,31 @@ class DefaultReplyer:
 
                         # 1. 尝试使用群名片作为主要显示名称
                         display_name = user_cardname
-                        
+
                         # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
                         if not display_name:
                             display_name = person_name or user_nickname or "某人"
-                            
+
                         # 3. 构建辅助信息（括号内的内容）
                         aux_info = []
-                        
+
                         # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
                         if display_name == user_cardname and user_nickname and user_nickname != display_name:
                             # 只有当昵称不太长时才显示，避免刷屏
                             if len(user_nickname) < 10:
                                 aux_info.append(user_nickname)
-                                
+
                         # 4. 添加 QQ 号（这是最稳定的标识符）
                         if user_id != str(global_config.bot.qq_account):
                             aux_info.append(user_id)
-                        
+
                         # 处理群身份前缀
                         role_prefix = ""
                         if user_role == "owner":
                             role_prefix = "[群主]"
                         elif user_role == "admin":
                             role_prefix = "[管理员]"
-        
+
                         # 5. 组合最终名称
                         if aux_info:
                             sender_name = f"{role_prefix}{display_name}({'/'.join(aux_info)})"
@@ -1127,24 +1127,24 @@ class DefaultReplyer:
 
                 # 1. 尝试使用群名片作为主要显示名称
                 display_name = user_cardname
-                
+
                 # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
                 if not display_name:
                     display_name = person_name or user_nickname or "某人"
-                    
+
                 # 3. 构建辅助信息（括号内的内容）
                 aux_info = []
-                
+
                 # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
                 if display_name == user_cardname and user_nickname and user_nickname != display_name:
                     # 只有当昵称不太长时才显示，避免刷屏
                     if len(user_nickname) < 10:
                         aux_info.append(user_nickname)
-                        
+
                 # 4. 添加 QQ 号（这是最稳定的标识符）
                 if user_id != str(global_config.bot.qq_account):
                     aux_info.append(user_id)
-                
+
                 # 处理群身份前缀
                 role_prefix = ""
                 if user_role == "owner":
@@ -1615,7 +1615,7 @@ class DefaultReplyer:
         group_chat_reminder_block = ""
         if is_group_chat:
             group_chat_reminder_block = "注意：在规划回复时，务必确定对方是不是真的在叫自己。聊天时往往有数百甚至数千个用户，请务必认清自己的身份和角色，避免误以为对方在和自己对话而贸然插入回复，导致尴尬局面。"
-            
+
             # 获取Bot在群内的身份
             try:
                 if global_config.bot.qq_account and chat_stream.group_info:
@@ -1623,10 +1623,10 @@ class DefaultReplyer:
                     try:
                         g_id = int(chat_stream.group_info.group_id)
                         u_id = int(global_config.bot.qq_account)
-                        
+
                         # 延迟导入以避免循环依赖
                         from src.plugins.built_in.napcat_adapter.src.handlers.utils import get_member_info
-                        
+
                         bot_member_info = await get_member_info(g_id, u_id)
                         if bot_member_info:
                             role = bot_member_info.get("role")
