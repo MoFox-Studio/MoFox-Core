@@ -122,17 +122,17 @@ class KokoroFlowChatter(BaseChatter):
         peek_messages = context.get_unread_messages()
         if not peek_messages:
             return self._build_result(success=True, message="no_unread_messages")
-        
+
         target_message = peek_messages[-1]
         if not target_message.user_info:
              return self._build_result(success=False, message="no_user_info")
-             
+
         user_id = str(target_message.user_info.user_id)
 
         # 使用全局用户锁来确保同一用户的处理是串行的
         # 注意：不能使用 SessionManager._get_lock，因为 get_session 内部也会请求该锁，导致死锁
         user_lock = await get_user_lock(user_id)
-        
+
         async with user_lock:
             self._processing = True
             # 更新上下文状态，以便 MessageManager 能正确检测到正在处理中（用于系统打断）
@@ -285,17 +285,17 @@ class KokoroFlowChatter(BaseChatter):
                         except BaseException as e:
                             # 检查是否是打断异常 (KFCInterruptionError 现在继承自 BaseException 以穿透 action_manager)
                             from .actions.reply import KFCInterruptionError
-                            
+
                             # 显式检查类型
                             if isinstance(e, KFCInterruptionError):
                                 logger.info(f"[KFC] 检测到打断: {e}")
-                                
+
                                 # 记录已发送的部分
                                 if action.type == "kfc_reply":
                                     action.params["content"] = e.partial_reply
                                     if e.partial_reply:
                                         has_reply = True
-                                
+
                                 # 记录这次规划（包含已执行的部分）
                                 session.add_bot_planning(
                                     thought=plan_response.thought + " (发送过程中被新消息打断)",
@@ -303,14 +303,14 @@ class KokoroFlowChatter(BaseChatter):
                                     expected_reaction=plan_response.expected_reaction,
                                     max_wait_seconds=0, # 打断后立即处理新消息，不等待
                                 )
-                                
+
                                 # 13. 标记消息为已读
                                 for msg in unread_messages:
                                     context.mark_message_as_read(str(msg.message_id))
-                                
+
                                 # 提前保存 Session 并退出
                                 await self.session_manager.save_session(user_id)
-                                
+
                                 current_mode_str = "unified" if self._mode == KFCMode.UNIFIED else "split"
                                 return self._build_result(
                                     success=True,
@@ -320,25 +320,25 @@ class KokoroFlowChatter(BaseChatter):
                                     situation_type=situation_type,
                                     mode=current_mode_str,
                                 )
-                            
+
                             elif isinstance(e, asyncio.CancelledError):
                                 # 任务被取消（LLM思考阶段被取消）
                                 logger.info("[KFC] 任务被取消 (Thinking Phase Interruption)")
-                                
+
                                 # 关键修复：如果在思考阶段被打断，必须回滚 mental_log 中新添加的消息
                                 # 因为这些消息仍然是 UNREAD 状态，下一次 execute 会再次读取它们。
                                 # 如果不回滚，mental_log 中会出现重复的消息记录。
-                                if 'messages_added_count' in locals() and messages_added_count > 0:
+                                if "messages_added_count" in locals() and messages_added_count > 0:
                                     if session and hasattr(session, "mental_log"):
                                         if len(session.mental_log) >= messages_added_count:
                                             session.mental_log = session.mental_log[:-messages_added_count]
                                             logger.info(f"[KFC] 因打断回滚了 {messages_added_count} 条消息记录，等待下一次合并处理")
-                                
+
                                 # 保存回滚后的 Session (保持状态一致性)
-                                if 'user_id' in locals() and user_id:
+                                if "user_id" in locals() and user_id:
                                     await self.session_manager.save_session(user_id)
                                 raise e
-                                
+
                             else:
                                 # 其他异常正常抛出
                                 raise e
@@ -389,7 +389,7 @@ class KokoroFlowChatter(BaseChatter):
                         situation_type=situation_type,
                         mode=mode_str,
                     )
-                
+
                 return last_result
 
             except Exception as e:

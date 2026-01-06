@@ -624,15 +624,15 @@ async def _build_readable_messages_internal(
             }
 
         user_info = msg.get("user_info", {})
-        
+
         # 兼容性处理：如果 user_info 是对象而不是字典，使用 getattr
         if hasattr(user_info, "to_dict"):
             user_info = user_info.to_dict()
-        
+
         platform = user_info.get("platform")
         if not platform and msg.get("platform"): # 回退到 msg 级别
             platform = msg.get("platform")
-            
+
         user_id = user_info.get("user_id")
         if not user_id and msg.get("user_id"): # 回退到 msg 级别
             user_id = msg.get("user_id")
@@ -640,17 +640,17 @@ async def _build_readable_messages_internal(
         user_nickname = user_info.get("user_nickname")
         if not user_nickname and msg.get("user_nickname"): # 回退
             user_nickname = msg.get("user_nickname")
-            
+
         user_cardname = user_info.get("user_cardname")
         if not user_cardname and msg.get("user_cardname"): # 回退
             user_cardname = msg.get("user_cardname")
-            
+
         user_role = user_info.get("role")
         if not user_role and msg.get("role"): # 回退
             user_role = msg.get("role")
         if not user_role and msg.get("user_role"): # 兼容 flatten 后的 key
             user_role = msg.get("user_role")
-        
+
         # 兼容 additional_config 中的 role (从 message_handler.py 注入)
         if not user_role and "additional_config" in msg.get("message_info", {}):
             user_role = msg["message_info"]["additional_config"].get("role")
@@ -689,18 +689,18 @@ async def _build_readable_messages_internal(
 
             # 1. 尝试使用群名片作为主要显示名称
             display_name = user_cardname
-            
+
             # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
             if not display_name:
                 display_name = person_name or user_nickname or "某人"
-                
+
             # 3. 处理群身份前缀
             role_prefix = ""
             if user_role == "owner":
                 role_prefix = "[群主]"
             elif user_role == "admin":
                 role_prefix = "[管理员]"
-                
+
             # 4. 构建辅助信息（括号内的内容）
             aux_info = []
 

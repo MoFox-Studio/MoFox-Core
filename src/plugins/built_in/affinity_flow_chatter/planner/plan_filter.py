@@ -527,7 +527,7 @@ class ChatterPlanFilter:
                     user_nickname = msg.get("user_nickname", "")
                     user_cardname = msg.get("user_cardname", "")
                     user_id = msg.get("user_id", "")
-                    
+
                     # 尝试获取 role (兼容 flatten 后的 user_role key)
                     user_role = msg.get("user_role")
                     if not user_role:
@@ -535,15 +535,15 @@ class ChatterPlanFilter:
                         user_role = user_info.get("role") if isinstance(user_info, dict) else msg.get("role")
 
                     display_name = user_cardname if user_cardname else (user_nickname if user_nickname else "未知用户")
-                    
+
                     aux_info = []
                     if display_name == user_cardname and user_nickname and user_nickname != display_name:
                         if len(user_nickname) < 10:
                             aux_info.append(user_nickname)
-                    
+
                     if user_id and user_id != str(global_config.bot.qq_account):
                         aux_info.append(user_id)
-                    
+
                     # 处理群身份前缀
                     role_prefix = ""
                     if user_role == "owner":
