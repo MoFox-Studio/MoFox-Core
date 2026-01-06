@@ -1689,8 +1689,8 @@ class DefaultReplyer:
         # normal: 对未读消息的统一回应
         template_name = "s4u_style_prompt" if prompt_mode == "s4u" else "normal_style_prompt"
 
-        # 获取模板内容
-        template_prompt = await global_prompt_manager.get_prompt_async(template_name)
+        # 获取模板内容 - 传入parameters以便注入组件能获取正确的chat_id等信息
+        template_prompt = await global_prompt_manager.get_prompt_async(template_name, parameters=prompt_parameters)
         prompt = Prompt(template=template_prompt.template, parameters=prompt_parameters)
         prompt_text = await prompt.build()
 
