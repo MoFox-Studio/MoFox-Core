@@ -13,7 +13,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import StaticPool  # 🔧 改用 StaticPool 而不是 NullPool
 
 from src.common.logger import get_logger
 
@@ -98,10 +98,11 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
         (url, engine_kwargs) 元组
 
     Note:
-        SQLite 使用 NullPool 而非默认的 QueuePool，原因：
-        1. SQLite 是文件锁定型数据库，不适合长连接池
-        2. NullPool 每次请求创建新连接，用完即释放，避免连接池耗尽
-        3. 配合 WAL 模式和 busy_timeout，可以很好地处理并发读写
+        SQLite 使用 StaticPool 而非默认的 QueuePool，原因：
+        1. StaticPool 复用单个连接，避免频繁创建/销毁连接的开销
+        2. 相比 NullPool（每次新建连接），StaticPool 更高效
+        3. 相比 QueuePool（多连接池），StaticPool 避免 SQLite 文件锁冲突
+        4. 配合 WAL 模式和 busy_timeout，可以很好地处理并发读写
     """
     if not os.path.isabs(config.sqlite_path):
         ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -117,10 +118,8 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
     engine_kwargs = {
         "echo": False,
         "future": True,
-        # 使用 NullPool 避免连接池耗尽问题
-        # SQLite 不适合使用 QueuePool，因为它是单文件数据库
-        # 每次请求创建新连接，用完即释放
-        "poolclass": NullPool,
+        # 🔧 使用 StaticPool 复用单个连接，避免 NullPool 的频繁创建开销
+        "poolclass": StaticPool,
         "connect_args": {
             "check_same_thread": False,
             # 增加 timeout，让 SQLite 在遇到锁时等待更长时间
@@ -128,7 +127,7 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
         },
     }
 
-    logger.debug(f"SQLite配置: {db_path} (使用 NullPool)")
+    logger.debug(f"SQLite配置: {db_path} (使用 StaticPool)")
     return url, engine_kwargs
 
 

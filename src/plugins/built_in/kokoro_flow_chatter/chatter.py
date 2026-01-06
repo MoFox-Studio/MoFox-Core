@@ -38,11 +38,24 @@ logger = get_logger("kfc_chatter")
 # 全局用户锁，用于串行化同一用户的消息处理，避免并发冲突
 _user_locks: dict[str, asyncio.Lock] = {}
 _user_locks_mutex = asyncio.Lock()
+_user_lock_access_times: dict[str, float] = {}  # 🔧 跟踪每个锁的最后访问时间
+MAX_USER_LOCKS = 1000  # 🔧 最多保存 1000 个用户锁
 
 async def get_user_lock(user_id: str) -> asyncio.Lock:
     async with _user_locks_mutex:
+        # 🔧 LRU 清理：如果超过限制，删除最久未使用的锁
+        if len(_user_locks) >= MAX_USER_LOCKS and user_id not in _user_locks:
+            # 找到最旧的锁
+            oldest_user = min(_user_lock_access_times.items(), key=lambda x: x[1])[0]
+            del _user_locks[oldest_user]
+            del _user_lock_access_times[oldest_user]
+            logger.debug(f"🧹 清理久未使用的用户锁: {oldest_user}")
+        
         if user_id not in _user_locks:
             _user_locks[user_id] = asyncio.Lock()
+        
+        # 更新访问时间
+        _user_lock_access_times[user_id] = time.time()
         return _user_locks[user_id]
 
 

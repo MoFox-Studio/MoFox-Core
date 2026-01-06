@@ -544,6 +544,28 @@ class MainSystem:
         except Exception as e:
             logger.error(f"启动内存监控失败: {e}")
 
+        # ✅ 启动缓存清理后台任务（修复缓存泄漏）
+        try:
+            from src.common.cache_manager import tool_cache
+            
+            async def cache_cleanup_loop():
+                """缓存清理循环（每10分钟清理一次过期条目）"""
+                while True:
+                    try:
+                        await asyncio.sleep(600)  # 10分钟
+                        await tool_cache.clean_expired()
+                        logger.debug("🧹 缓存清理任务已执行")
+                    except Exception as e:
+                        logger.error(f"缓存清理失败: {e}")
+            
+            # 创建后台任务
+            cleanup_task = asyncio.create_task(cache_cleanup_loop())
+            _background_tasks.add(cleanup_task)
+            cleanup_task.add_done_callback(_background_tasks.discard)
+            logger.info("✅ 缓存清理后台任务已启动（间隔: 10分钟）")
+        except Exception as e:
+            logger.error(f"启动缓存清理任务失败: {e}")
+
     async def _init_planning_components(self) -> None:
         """初始化计划相关组件"""
         # 初始化月度计划管理器

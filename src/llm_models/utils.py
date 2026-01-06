@@ -151,15 +151,29 @@ class LLMUsageRecorder:
     def __init__(self):
         self._queue: asyncio.Queue | None = None
         self._worker_task: asyncio.Task | None = None
+        self._shutdown_flag = False  # 🔧 添加关闭标志
 
     async def _ensure_worker(self):
         """确保后台写入任务正在运行"""
+        if self._shutdown_flag:
+            return
+        
         if self._queue is None:
             # 限制队列大小，避免内存无限增长
             self._queue = asyncio.Queue(maxsize=1000)
 
-        if self._worker_task is None or self._worker_task.done():
+        # 🔧 修复：只在任务不存在时创建，done() 检查会导致重复创建
+        if self._worker_task is None:
             self._worker_task = asyncio.create_task(self._worker_loop())
+            logger.debug("✅ LLM使用记录后台任务已启动")
+        elif self._worker_task.done():
+            # 如果任务意外结束，记录错误并重启
+            try:
+                await self._worker_task  # 获取异常
+            except Exception as e:
+                logger.error(f"❌ LLM使用记录后台任务异常退出: {e}")
+            self._worker_task = asyncio.create_task(self._worker_loop())
+            logger.warning("⚠️ LLM使用记录后台任务已重启")
 
     async def _worker_loop(self):
         """后台任务：串行处理数据库写入"""
@@ -167,9 +181,9 @@ class LLMUsageRecorder:
         BATCH_SIZE = 10
         BATCH_TIMEOUT = 5.0  # 秒
 
-        while True:
+        while not self._shutdown_flag:  # 🔧 检查关闭标志
             try:
-                if self._queue is None:
+                if self._queue is None or self._shutdown_flag:
                     break
 
                 # 尝试获取第一条数据
@@ -293,6 +307,18 @@ class LLMUsageRecorder:
                 logger.warning("Token使用记录队列已满，丢弃当前记录以避免阻塞")
             except Exception as e:
                 logger.error(f"添加使用记录到队列失败: {e!s}")
+
+
+    async def shutdown(self):
+        """关闭后台任务"""
+        self._shutdown_flag = True
+        if self._worker_task and not self._worker_task.done():
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("🛑 LLM使用记录后台任务已停止")
 
 
 llm_usage_recorder = LLMUsageRecorder()

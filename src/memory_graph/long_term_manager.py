@@ -92,6 +92,10 @@ class LongTermMemoryManager:
             # 确保底层 MemoryManager 已初始化
             if not self.memory_manager._initialized:
                 await self.memory_manager.initialize()
+            
+            # 类型断言：确保关键组件已初始化
+            assert self.memory_manager.graph_store is not None, "GraphStore未初始化"
+            assert self.memory_manager.persistence is not None, "Persistence未初始化"
 
             self._initialized = True
             logger.debug("长期记忆管理器初始化完成")
@@ -168,7 +172,7 @@ class LongTermMemoryManager:
 
     async def _process_batch(self, batch: list[ShortTermMemory]) -> dict[str, Any]:
         """
-        处理一批短期记忆（并行处理）
+        处理一批短期记忆（并行处理，带并发控制）
 
         Args:
             batch: 短期记忆批次
@@ -185,29 +189,51 @@ class LongTermMemoryManager:
             "transferred_memory_ids": [],
         }
 
-        # 并行处理批次中的所有记忆
-        tasks = [self._process_single_memory(stm) for stm in batch]
+        # 从配置获取最大并发LLM调用数
+        max_concurrent = getattr(self.memory_manager.config, "max_concurrent_llm_calls", 3)
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def _process_with_limit(stm: ShortTermMemory) -> tuple[ShortTermMemory, dict[str, Any] | None]:
+            """带信号量限制的单记忆处理"""
+            async with semaphore:
+                single_result = await self._process_single_memory(stm)
+                return stm, single_result
+
+        # 并行处理批次中的所有记忆（但受信号量限制）
+        tasks = [_process_with_limit(stm) for stm in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 汇总结果
-        for stm, single_result in zip(batch, results):
-            if isinstance(single_result, Exception):
-                logger.error(f"处理短期记忆 {stm.id} 失败: {single_result}")
+        for item in results:
+            if isinstance(item, Exception):
+                logger.error(f"处理批次记忆失败: {item}")
                 result["failed_count"] += 1
-            elif single_result and isinstance(single_result, dict):
-                result["processed_count"] += 1
-                result["transferred_memory_ids"].append(stm.id)
+                continue
 
-                # 统计操作类型
-                operations = single_result.get("operations", [])
-                if isinstance(operations, list):
-                    for op_type in operations:
-                        if op_type == GraphOperationType.CREATE_MEMORY:
-                            result["created_count"] += 1
-                        elif op_type == GraphOperationType.UPDATE_MEMORY:
-                            result["updated_count"] += 1
-                        elif op_type == GraphOperationType.MERGE_MEMORIES:
-                            result["merged_count"] += 1
+            if not isinstance(item, tuple) or len(item) != 2:
+                logger.error(f"意外的结果格式: {item}")
+                result["failed_count"] += 1
+                continue
+
+            stm, single_result = item
+
+            if not single_result:
+                result["failed_count"] += 1
+                continue
+
+            result["processed_count"] += 1
+            result["transferred_memory_ids"].append(stm.id)
+
+            # 统计操作类型
+            operations = single_result.get("operations", [])
+            if isinstance(operations, list):
+                for op_type in operations:
+                    if op_type == GraphOperationType.CREATE_MEMORY:
+                        result["created_count"] += 1
+                    elif op_type == GraphOperationType.UPDATE_MEMORY:
+                        result["updated_count"] += 1
+                    elif op_type == GraphOperationType.MERGE_MEMORIES:
+                        result["merged_count"] += 1
             else:
                 result["failed_count"] += 1
 
@@ -287,8 +313,11 @@ class LongTermMemoryManager:
             from src.config.config import global_config
 
             # 检查是否启用了高级路径扩展算法
-            use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
-            expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
+            use_path_expansion = False
+            expand_depth = 0
+            if global_config and global_config.memory:
+                use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
+                expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
 
             # 1. 检索记忆
             memories = await self.memory_manager.search_memories(
@@ -405,6 +434,7 @@ class LongTermMemoryManager:
             prompt = self._build_graph_operation_prompt(stm, similar_memories)
 
             # 调用长期记忆构建模型
+            assert model_config.model_task_config is not None, "ModelTaskConfig未初始化"
             llm = LLMRequest(
                 model_set=model_config.model_task_config.memory_long_term_builder,
                 request_type="long_term_memory.graph_operations",
@@ -586,19 +616,28 @@ class LongTermMemoryManager:
             except Exception:
                 # 回退：尝试使用 json_repair 修复
                 try:
-                    data = json_repair.loads(json_str)
+                    repair_result = json_repair.loads(json_str)
+                    # json_repair.loads 可能返回多种类型，需要验证
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
                 except Exception:
                     # 再回退：截取首个 JSON 片段 [] 或 {}
                     start_arr, end_arr = json_str.find("["), json_str.rfind("]")
                     start_obj, end_obj = json_str.find("{"), json_str.rfind("}")
                     segment = None
-                    if start_arr != -1 and end_arr != -1 and end_arr > start_arr:
+                    if start_arr != -1 and end_arr != -1 and end_arr > start_obj:
                         segment = json_str[start_arr : end_arr + 1]
                     elif start_obj != -1 and end_obj != -1 and end_obj > start_obj:
                         segment = json_str[start_obj : end_obj + 1]
                     if segment is None:
                         raise
-                    data = json_repair.loads(segment)
+                    repair_result = json_repair.loads(segment)
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
 
             # 统一为列表
             if isinstance(data, dict):
@@ -884,7 +923,12 @@ class LongTermMemoryManager:
             logger.debug(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
 
         # 1. 调用 GraphStore 的合并功能（转移节点和边）
-        merge_success = self.memory_manager.graph_store.merge_memories(target_id, memories_to_merge)
+        # 使用 to_thread 防止同步操作阻塞事件循环
+        merge_success = await asyncio.to_thread(
+            self.memory_manager.graph_store.merge_memories,
+            target_id,
+            memories_to_merge
+        )
 
         if merge_success:
             # 2. 更新目标记忆的元数据
