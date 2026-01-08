@@ -157,7 +157,7 @@ class LLMUsageRecorder:
         """确保后台写入任务正在运行"""
         if self._shutdown_flag:
             return
-        
+
         if self._queue is None:
             # 限制队列大小，避免内存无限增长
             self._queue = asyncio.Queue(maxsize=1000)

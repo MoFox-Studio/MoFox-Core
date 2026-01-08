@@ -874,7 +874,7 @@ class MemoryTools:
                                 result_queries.append((text, weight))
                         elif isinstance(item, str) and item.strip():
                             result_queries.append((item.strip(), 1.0))
-                    
+
                     if result_queries:
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(f"⚡ 使用外部提供的多重查询 ({len(result_queries)}个)，跳过LLM生成")

@@ -549,7 +549,7 @@ class AiohttpGeminiClient(BaseClient):
             try:
                 # � 修复：使用全局复用的 Session
                 session = await self._get_session()
-                
+
                 if method.upper() == "POST":
                     response = await session.post(
                         url, json=data, headers={"Accept": "text/event-stream" if stream else "application/json"}

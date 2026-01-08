@@ -14,12 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from src.common.logger import get_logger
+from src.config.config import global_config
 from src.memory_graph.long_term_manager import LongTermMemoryManager
 from src.memory_graph.manager import MemoryManager
 from src.memory_graph.models import JudgeDecision, MemoryBlock, ShortTermMemory
 from src.memory_graph.perceptual_manager import PerceptualMemoryManager
 from src.memory_graph.short_term_manager import ShortTermMemoryManager
-from src.config.config import global_config
 
 logger = get_logger(__name__)
 
@@ -277,7 +277,7 @@ class UnifiedMemoryManager:
                 # 根据配置决定是否启用查询优化（小模型生成查询）
                 # 如果 enable_query_optimization=False，则完全跳过小模型，实现真正的毫秒级急速响应
                 use_optimization = getattr(global_config.memory, "enable_query_optimization", True)
-                
+
                 long_term_memories = await self.memory_manager.search_memories(
                     query=query_text,
                     top_k=5,

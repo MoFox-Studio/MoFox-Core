@@ -330,34 +330,34 @@ class CacheManager:
         # 🔍 监控：记录缓存增长
         global _last_cache_report_time, _cache_operation_count, _last_l1_size, _last_vector_size
         _cache_operation_count += 1
-        
+
         # 定期输出缓存状态（每100次操作或每5分钟）
         current_time = time.time()
         if _cache_operation_count % 100 == 0 or (current_time - _last_cache_report_time) > 300:
             current_l1_size = len(self.l1_kv_cache)
-            current_vector_size = self.l1_vector_index.ntotal if hasattr(self.l1_vector_index, 'ntotal') else 0
-            
+            current_vector_size = self.l1_vector_index.ntotal if hasattr(self.l1_vector_index, "ntotal") else 0
+
             l1_growth = current_l1_size - _last_l1_size
             vector_growth = current_vector_size - _last_vector_size
-            
+
             logger.info(
                 f"📊 [缓存监控] L1缓存: {current_l1_size}条 (增长+{l1_growth}) | "
                 f"向量索引: {current_vector_size}条 (增长+{vector_growth}) | "
                 f"总操作数: {_cache_operation_count}"
             )
-            
+
             # 🚨 检查是否持续增长且从未清理
             if current_l1_size > 500:
                 logger.warning(
                     f"⚠️ [性能警告] L1缓存已经达到 {current_l1_size} 条，可能存在内存泄漏！"
                     f"检查 clean_expired() 方法是否被定期调用。"
                 )
-            
+
             if current_vector_size > 300:
                 logger.warning(
                     f"⚠️ [性能警告] 向量索引已达 {current_vector_size} 条，查询性能可能下降。"
                 )
-            
+
             _last_cache_report_time = current_time
             _last_l1_size = current_l1_size
             _last_vector_size = current_vector_size
@@ -477,7 +477,7 @@ class CacheManager:
 
         # 🔧 限制统计字典大小，防止内存泄漏
         MAX_TOOLS_TRACKED = 100  # 最多跟踪100个不同的工具
-        
+
         # 更新工具使用统计
         if tool_name not in self.tool_stats["most_used_tools"]:
             # 如果已达上限，删除使用最少的工具

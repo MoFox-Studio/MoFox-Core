@@ -50,10 +50,10 @@ async def get_user_lock(user_id: str) -> asyncio.Lock:
             del _user_locks[oldest_user]
             del _user_lock_access_times[oldest_user]
             logger.debug(f"🧹 清理久未使用的用户锁: {oldest_user}")
-        
+
         if user_id not in _user_locks:
             _user_locks[user_id] = asyncio.Lock()
-        
+
         # 更新访问时间
         _user_lock_access_times[user_id] = time.time()
         return _user_locks[user_id]

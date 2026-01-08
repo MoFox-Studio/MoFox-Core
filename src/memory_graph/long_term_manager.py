@@ -92,7 +92,7 @@ class LongTermMemoryManager:
             # 确保底层 MemoryManager 已初始化
             if not self.memory_manager._initialized:
                 await self.memory_manager.initialize()
-            
+
             # 类型断言：确保关键组件已初始化
             assert self.memory_manager.graph_store is not None, "GraphStore未初始化"
             assert self.memory_manager.persistence is not None, "Persistence未初始化"

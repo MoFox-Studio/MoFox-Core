@@ -136,6 +136,14 @@ class MainSystem:
 
         cleanup_tasks = []
 
+        # 停止日程管理器（优先级最高，防止在关闭数据库前任务还在访问）
+        try:
+            from src.schedule.schedule_manager import schedule_manager
+
+            cleanup_tasks.append(("日程管理器", schedule_manager.shutdown()))
+        except Exception as e:
+            logger.error(f"准备停止日程管理器时出错: {e}")
+
         # 停止消息批处理器
         try:
             from src.chat.message_receive.storage import get_message_storage_batcher, get_message_update_batcher
@@ -235,11 +243,12 @@ class MainSystem:
             tasks = [task for _, task in cleanup_tasks]
             task_names = [name for name, _ in cleanup_tasks]
 
-            # 使用asyncio.gather并行执行，设置超时防止卡死
+            # 使用asyncio.gather并行执行，使用更长的超时或者更智能的取消策略
             try:
+                # 给清理任务更多时间（60秒）以确保优雅关闭完成
                 results = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=30.0,  # 30秒超时
+                    timeout=60.0,  # 增加到60秒超时以允许优雅关闭
                 )
 
                 # 记录结果
@@ -250,11 +259,28 @@ class MainSystem:
                         logger.info(f"🛑 {name} 已停止")
 
             except asyncio.TimeoutError:
-                logger.error("清理任务超时，强制退出")
+                logger.error("清理任务超时，开始强制取消...")
+                # 取消所有仍在运行的任务
+                for task in tasks:
+                    if isinstance(task, asyncio.Task) and not task.done():
+                        task.cancel()
+                # 等待所有任务完成（已取消）
+                await asyncio.gather(*tasks, return_exceptions=True)
+                logger.error("所有清理任务已被强制取消")
             except Exception as e:
                 logger.error(f"执行清理任务时发生错误: {e}")
         else:
             logger.warning("没有需要清理的任务")
+
+        # 停止日志广播器（在所有其他清理后停止，避免关闭期间的日志问题）
+        try:
+            from src.common.log_broadcaster import get_log_broadcaster
+
+            log_broadcaster = get_log_broadcaster()
+            await log_broadcaster.shutdown()
+            logger.info("🛑 日志广播器已停止")
+        except Exception as e:
+            logger.error(f"停止日志广播器时出错: {e}")
 
         # 停止数据库服务 (在所有其他任务完成后最后停止)
         try:
@@ -547,7 +573,7 @@ class MainSystem:
         # ✅ 启动缓存清理后台任务（修复缓存泄漏）
         try:
             from src.common.cache_manager import tool_cache
-            
+
             async def cache_cleanup_loop():
                 """缓存清理循环（每10分钟清理一次过期条目）"""
                 while True:
@@ -557,7 +583,7 @@ class MainSystem:
                         logger.debug("🧹 缓存清理任务已执行")
                     except Exception as e:
                         logger.error(f"缓存清理失败: {e}")
-            
+
             # 创建后台任务
             cleanup_task = asyncio.create_task(cache_cleanup_loop())
             _background_tasks.add(cleanup_task)
