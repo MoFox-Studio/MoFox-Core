@@ -259,7 +259,12 @@ class _ModelSelector:
                 )
         else:
             # 其他未知异常，给予基础惩罚
-            logger.warning(f"模型 '{model_name}' 发生未知异常: {type(e).__name__}，增加基础惩罚值: {penalty_increment}")
+            import traceback
+            logger.warning(
+                f"模型 '{model_name}' 发生未知异常: {type(e).__name__}，增加基础惩罚值: {penalty_increment}\n"
+                f"异常详情: {e!s}\n"
+                f"异常堆栈:\n{traceback.format_exc()}"
+            )
 
         self.model_usage[model_name] = stats._replace(penalty=stats.penalty + penalty_increment)
 
@@ -681,7 +686,12 @@ class _RequestExecutor:
             logger.error(f"任务-'{self.task_name}' 模型-'{model_name}': 响应解析错误 - {e.message}")
             return -1, None
         else:
-            logger.error(f"任务-'{self.task_name}' 模型-'{model_name}': 未知异常 - {e!s}")
+            import traceback
+            logger.error(
+                f"任务-'{self.task_name}' 模型-'{model_name}': 未知异常 - {e!s}\n"
+                f"异常类型: {type(e).__name__}\n"
+                f"异常堆栈:\n{traceback.format_exc()}"
+            )
             return -1, None
 
     async def _handle_resp_not_ok(

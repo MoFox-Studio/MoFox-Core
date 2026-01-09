@@ -61,7 +61,11 @@ class RespParseException(Exception):
         self.message = message
 
     def __str__(self):
-        return self.message or "解析响应内容时发生未知错误，请检查是否配置了正确的解析方法"
+        base_msg = self.message or "解析响应内容时发生未知错误，请检查是否配置了正确的解析方法"
+        if self.ext_info:
+            # 添加额外信息以便调试
+            return f"{base_msg}\n附加信息: {self.ext_info}"
+        return base_msg
 
 
 class PayLoadTooLargeError(Exception):

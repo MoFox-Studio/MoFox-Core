@@ -278,6 +278,16 @@ async def _default_stream_response_handler(
             _insure_buffer_closed()
             raise ReqAbortException("请求被外部信号中断")
 
+        # 调试日志：检查 choices 是否存在和长度
+        if not hasattr(event, 'choices'):
+            logger.error(f"[流式响应] event 缺少 choices 属性。event 类型: {type(event)}, event 内容: {event}")
+            raise RespParseException(event, "流式响应解析失败，event 缺少 choices 属性")
+        
+        if not event.choices or len(event.choices) == 0:
+            logger.error(f"[流式响应] choices 列表为空。event: {event}, choices: {getattr(event, 'choices', None)}")
+            raise RespParseException(event, "流式响应解析失败，choices 列表为空")
+        
+        logger.debug(f"[流式响应] choices 长度: {len(event.choices)}")
         delta = event.choices[0].delta  # 获取当前块的delta内容
 
         if hasattr(delta, "reasoning_content") and delta.reasoning_content:  # type: ignore
@@ -330,8 +340,16 @@ def _default_normal_response_parser(
     """
     api_response = APIResponse()
 
-    if not hasattr(resp, "choices") or len(resp.choices) == 0:
+    # 调试日志：详细检查响应结构
+    if not hasattr(resp, "choices"):
+        logger.error(f"[非流式响应] resp 缺少 choices 属性。resp 类型: {type(resp)}, resp 内容: {resp}")
         raise RespParseException(resp, "响应解析失败，缺失choices字段")
+    
+    if not resp.choices or len(resp.choices) == 0:
+        logger.error(f"[非流式响应] choices 列表为空。resp: {resp}, choices: {resp.choices}")
+        raise RespParseException(resp, "响应解析失败，choices列表为空")
+    
+    logger.debug(f"[非流式响应] choices 长度: {len(resp.choices)}")
     message_part = resp.choices[0].message
 
     if hasattr(message_part, "reasoning_content") and message_part.reasoning_content:  # type: ignore
