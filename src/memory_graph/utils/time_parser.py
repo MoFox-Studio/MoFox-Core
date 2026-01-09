@@ -77,7 +77,7 @@ class TimeParser:
                 logger.debug(f"解析器 {parser.__name__} 失败: {e}")
                 continue
 
-        logger.warning(f"无法解析时间: '{time_str}'，使用当前时间")
+        logger.debug(f"无法解析时间: '{time_str}'，使用当前时间")
         return self.reference_time
 
     def _parse_relative_day(self, time_str: str) -> datetime | None:
@@ -310,6 +310,16 @@ class TimeParser:
         if match:
             hour = int(match.group(1))
             return result.replace(hour=hour)
+
+        # HH:MM[:SS] 格式
+        pattern_time = r"(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?"
+        match = re.search(pattern_time, time_str)
+        if match:
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            second = int(match.group(3)) if match.group(3) else 0
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return result.replace(hour=hour, minute=minute, second=second)
 
         return None
 

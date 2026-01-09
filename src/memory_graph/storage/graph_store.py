@@ -782,7 +782,7 @@ class GraphStore:
             # 4. 删除源节点
             self.graph.remove_node(source_id)
 
-            logger.info(f"节点合并: {source_id} → {target_id}")
+            logger.debug(f"节点合并: {source_id} → {target_id}")
 
         except Exception as e:
             logger.error(f"合并节点失败: {e}")

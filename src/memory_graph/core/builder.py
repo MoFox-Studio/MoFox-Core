@@ -153,7 +153,8 @@ class MemoryBuilder:
                 },
             )
 
-            logger.info(
+            # 降低非必要日志级别
+            logger.debug(
                 f"构建记忆成功: {memory_id} - {len(nodes)} 节点, {len(edges)} 边"
             )
             return memory

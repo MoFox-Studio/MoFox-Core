@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 from datetime import datetime
@@ -147,20 +148,107 @@ class LLMUsageRecorder:
     LLM使用情况记录器（SQLAlchemy版本）
     """
 
-    async def record_usage_to_database(
+    def __init__(self):
+        self._queue: asyncio.Queue | None = None
+        self._worker_task: asyncio.Task | None = None
+        self._shutdown_flag = False  # 🔧 添加关闭标志
+
+    async def _ensure_worker(self):
+        """确保后台写入任务正在运行"""
+        if self._shutdown_flag:
+            return
+
+        if self._queue is None:
+            # 限制队列大小，避免内存无限增长
+            self._queue = asyncio.Queue(maxsize=1000)
+
+        # 🔧 修复：只在任务不存在时创建，done() 检查会导致重复创建
+        if self._worker_task is None:
+            self._worker_task = asyncio.create_task(self._worker_loop())
+            logger.debug("✅ LLM使用记录后台任务已启动")
+        elif self._worker_task.done():
+            # 如果任务意外结束，记录错误并重启
+            try:
+                await self._worker_task  # 获取异常
+            except Exception as e:
+                logger.error(f"❌ LLM使用记录后台任务异常退出: {e}")
+            self._worker_task = asyncio.create_task(self._worker_loop())
+            logger.warning("⚠️ LLM使用记录后台任务已重启")
+
+    async def _worker_loop(self):
+        """后台任务：串行处理数据库写入"""
+        # 批处理配置
+        BATCH_SIZE = 10
+        BATCH_TIMEOUT = 5.0  # 秒
+
+        while not self._shutdown_flag:  # 🔧 检查关闭标志
+            try:
+                if self._queue is None or self._shutdown_flag:
+                    break
+
+                # 尝试获取第一条数据
+                batch = []
+                try:
+                    # 如果队列为空，这里会等待
+                    item = await self._queue.get()
+                    batch.append(item)
+                except asyncio.CancelledError:
+                    break
+
+                # 尝试获取更多数据以进行批处理（非阻塞）
+                start_time = asyncio.get_event_loop().time()
+                while len(batch) < BATCH_SIZE:
+                    timeout = max(0, BATCH_TIMEOUT - (asyncio.get_event_loop().time() - start_time))
+                    if timeout <= 0:
+                        break
+
+                    try:
+                        # 使用 wait_for 等待下一条数据，超时则直接处理当前批次
+                        item = await asyncio.wait_for(self._queue.get(), timeout=0.1)
+                        batch.append(item)
+                    except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                        # 没有更多数据了，或者超时了，处理当前批次
+                        break
+                    except asyncio.CancelledError:
+                        # 任务被取消
+                        raise
+
+                if not batch:
+                    continue
+
+                # 逐个写入（可以优化为批量写入，但目前为了保持接口兼容先串行）
+                # 即使是串行，这样也能减少 task 切换的开销
+                for kwargs in batch:
+                    try:
+                        await self._write_to_db(**kwargs)
+                    except Exception as e:
+                        logger.error(f"写入单条使用记录失败: {e!s}")
+                    finally:
+                        self._queue.task_done()
+
+                # 给其他任务一点喘息时间
+                await asyncio.sleep(0.01)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Token使用记录写入任务异常: {e!s}")
+                await asyncio.sleep(1)
+
+    async def _write_to_db(
         self,
         model_info: ModelInfo,
         model_usage: UsageRecord,
         user_id: str,
         request_type: str,
         endpoint: str,
-        time_cost: float = 0.0,
+        time_cost: float,
     ):
+        """实际执行数据库写入"""
         input_cost = (model_usage.prompt_tokens / 1000000) * model_info.price_in
         output_cost = (model_usage.completion_tokens / 1000000) * model_info.price_out
         total_cost = round(input_cost + output_cost, 6)
 
-        session = None
         try:
             # 使用 SQLAlchemy 会话创建记录
             async with get_db_session() as session:
@@ -177,7 +265,7 @@ class LLMUsageRecorder:
                     cost=total_cost,
                     time_cost=round(time_cost or 0.0, 3),
                     status="success",
-                    timestamp=datetime.now(),  # SQLAlchemy 会处理 DateTime 字段
+                    timestamp=datetime.now(),
                 )
 
                 session.add(usage_record)
@@ -191,6 +279,46 @@ class LLMUsageRecorder:
             )
         except Exception as e:
             logger.error(f"记录token使用情况失败: {e!s}")
+
+    async def record_usage_to_database(
+        self,
+        model_info: ModelInfo,
+        model_usage: UsageRecord,
+        user_id: str,
+        request_type: str,
+        endpoint: str,
+        time_cost: float = 0.0,
+    ):
+        """将使用记录添加到队列"""
+        await self._ensure_worker()
+        if self._queue:
+            try:
+                # 使用 put_nowait 防止阻塞调用者
+                # 如果队列满了（maxsize=1000），这里会抛出 QueueFull
+                self._queue.put_nowait({
+                    "model_info": model_info,
+                    "model_usage": model_usage,
+                    "user_id": user_id,
+                    "request_type": request_type,
+                    "endpoint": endpoint,
+                    "time_cost": time_cost,
+                })
+            except asyncio.QueueFull:
+                logger.warning("Token使用记录队列已满，丢弃当前记录以避免阻塞")
+            except Exception as e:
+                logger.error(f"添加使用记录到队列失败: {e!s}")
+
+
+    async def shutdown(self):
+        """关闭后台任务"""
+        self._shutdown_flag = True
+        if self._worker_task and not self._worker_task.done():
+            self._worker_task.cancel()
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("🛑 LLM使用记录后台任务已停止")
 
 
 llm_usage_recorder = LLMUsageRecorder()

@@ -93,6 +93,10 @@ class LongTermMemoryManager:
             if not self.memory_manager._initialized:
                 await self.memory_manager.initialize()
 
+            # 类型断言：确保关键组件已初始化
+            assert self.memory_manager.graph_store is not None, "GraphStore未初始化"
+            assert self.memory_manager.persistence is not None, "Persistence未初始化"
+
             self._initialized = True
             logger.debug("长期记忆管理器初始化完成")
 
@@ -139,7 +143,7 @@ class LongTermMemoryManager:
                 batch_end = min(batch_start + self.batch_size, len(short_term_memories))
                 batch = short_term_memories[batch_start:batch_end]
 
-                logger.info(
+                logger.debug(
                     f"处理批次 {batch_start // self.batch_size + 1}/"
                     f"{(len(short_term_memories) - 1) // self.batch_size + 1} "
                     f"({len(batch)} 条记忆)"
@@ -168,7 +172,7 @@ class LongTermMemoryManager:
 
     async def _process_batch(self, batch: list[ShortTermMemory]) -> dict[str, Any]:
         """
-        处理一批短期记忆（并行处理）
+        处理一批短期记忆（并行处理，带并发控制）
 
         Args:
             batch: 短期记忆批次
@@ -185,29 +189,51 @@ class LongTermMemoryManager:
             "transferred_memory_ids": [],
         }
 
-        # 并行处理批次中的所有记忆
-        tasks = [self._process_single_memory(stm) for stm in batch]
+        # 从配置获取最大并发LLM调用数
+        max_concurrent = getattr(self.memory_manager.config, "max_concurrent_llm_calls", 3)
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def _process_with_limit(stm: ShortTermMemory) -> tuple[ShortTermMemory, dict[str, Any] | None]:
+            """带信号量限制的单记忆处理"""
+            async with semaphore:
+                single_result = await self._process_single_memory(stm)
+                return stm, single_result
+
+        # 并行处理批次中的所有记忆（但受信号量限制）
+        tasks = [_process_with_limit(stm) for stm in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 汇总结果
-        for stm, single_result in zip(batch, results):
-            if isinstance(single_result, Exception):
-                logger.error(f"处理短期记忆 {stm.id} 失败: {single_result}")
+        for item in results:
+            if isinstance(item, Exception):
+                logger.error(f"处理批次记忆失败: {item}")
                 result["failed_count"] += 1
-            elif single_result and isinstance(single_result, dict):
-                result["processed_count"] += 1
-                result["transferred_memory_ids"].append(stm.id)
+                continue
 
-                # 统计操作类型
-                operations = single_result.get("operations", [])
-                if isinstance(operations, list):
-                    for op_type in operations:
-                        if op_type == GraphOperationType.CREATE_MEMORY:
-                            result["created_count"] += 1
-                        elif op_type == GraphOperationType.UPDATE_MEMORY:
-                            result["updated_count"] += 1
-                        elif op_type == GraphOperationType.MERGE_MEMORIES:
-                            result["merged_count"] += 1
+            if not isinstance(item, tuple) or len(item) != 2:
+                logger.error(f"意外的结果格式: {item}")
+                result["failed_count"] += 1
+                continue
+
+            stm, single_result = item
+
+            if not single_result:
+                result["failed_count"] += 1
+                continue
+
+            result["processed_count"] += 1
+            result["transferred_memory_ids"].append(stm.id)
+
+            # 统计操作类型
+            operations = single_result.get("operations", [])
+            if isinstance(operations, list):
+                for op_type in operations:
+                    if op_type == GraphOperationType.CREATE_MEMORY:
+                        result["created_count"] += 1
+                    elif op_type == GraphOperationType.UPDATE_MEMORY:
+                        result["updated_count"] += 1
+                    elif op_type == GraphOperationType.MERGE_MEMORIES:
+                        result["merged_count"] += 1
             else:
                 result["failed_count"] += 1
 
@@ -287,8 +313,11 @@ class LongTermMemoryManager:
             from src.config.config import global_config
 
             # 检查是否启用了高级路径扩展算法
-            use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
-            expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
+            use_path_expansion = False
+            expand_depth = 0
+            if global_config and global_config.memory:
+                use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
+                expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
 
             # 1. 检索记忆
             memories = await self.memory_manager.search_memories(
@@ -405,6 +434,7 @@ class LongTermMemoryManager:
             prompt = self._build_graph_operation_prompt(stm, similar_memories)
 
             # 调用长期记忆构建模型
+            assert model_config.model_task_config is not None, "ModelTaskConfig未初始化"
             llm = LLMRequest(
                 model_set=model_config.model_task_config.memory_long_term_builder,
                 request_type="long_term_memory.graph_operations",
@@ -586,19 +616,28 @@ class LongTermMemoryManager:
             except Exception:
                 # 回退：尝试使用 json_repair 修复
                 try:
-                    data = json_repair.loads(json_str)
+                    repair_result = json_repair.loads(json_str)
+                    # json_repair.loads 可能返回多种类型，需要验证
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
                 except Exception:
                     # 再回退：截取首个 JSON 片段 [] 或 {}
                     start_arr, end_arr = json_str.find("["), json_str.rfind("]")
                     start_obj, end_obj = json_str.find("{"), json_str.rfind("}")
                     segment = None
-                    if start_arr != -1 and end_arr != -1 and end_arr > start_arr:
+                    if start_arr != -1 and end_arr != -1 and end_arr > start_obj:
                         segment = json_str[start_arr : end_arr + 1]
                     elif start_obj != -1 and end_obj != -1 and end_obj > start_obj:
                         segment = json_str[start_obj : end_obj + 1]
                     if segment is None:
                         raise
-                    data = json_repair.loads(segment)
+                    repair_result = json_repair.loads(segment)
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
 
             # 统一为列表
             if isinstance(data, dict):
@@ -651,23 +690,35 @@ class LongTermMemoryManager:
         try:
             success_count = 0
             temp_id_map: dict[str, str] = {}
+            active_memory_id: str | None = None
 
             for op in operations:
                 try:
                     if op.operation_type == GraphOperationType.CREATE_MEMORY:
                         await self._execute_create_memory(op, source_stm, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_MEMORY:
                         await self._execute_update_memory(op, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.MERGE_MEMORIES:
                         await self._execute_merge_memories(op, source_stm, temp_id_map)
+                        # 获取合并后的目标记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        source_ids = params.get("source_memory_ids", [])
+                        if source_ids:
+                            active_memory_id = source_ids[0]
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_NODE:
                         await self._execute_create_node(op, temp_id_map)
+                        # 更新当前上下文记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        if params.get("memory_id"):
+                            active_memory_id = params.get("memory_id")
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_NODE:
@@ -679,7 +730,9 @@ class LongTermMemoryManager:
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_EDGE:
-                        await self._execute_create_edge(op, temp_id_map)
+                        await self._execute_create_edge(
+                            op, temp_id_map, default_memory_id=active_memory_id
+                        )
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_EDGE:
@@ -803,7 +856,7 @@ class LongTermMemoryManager:
             memory.metadata["transferred_from_stm"] = source_stm.id
             memory.metadata["transfer_time"] = datetime.now().isoformat()
 
-            logger.info(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
+            logger.debug(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             # 这样即使 LLM 使用了中文描述作为 ID (如 "新创建的记忆"), 也能正确映射
             self._register_temp_id(op.target_id, memory.id, temp_id_map, force=True)
@@ -836,7 +889,7 @@ class LongTermMemoryManager:
         success = await self.memory_manager.update_memory(memory_id, **updates)
 
         if success:
-            logger.info(f"更新长期记忆: {memory_id}")
+            logger.debug(f"更新长期记忆: {memory_id}")
         else:
             logger.error(f"更新长期记忆失败: {memory_id}")
 
@@ -862,10 +915,20 @@ class LongTermMemoryManager:
         # 待合并记忆（将被删除的）
         memories_to_merge = source_ids[1:]
 
-        logger.info(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
+        if not memories_to_merge:
+            logger.debug(f"合并操作未指定源记忆，跳过实际合并: target={target_id}")
+            # 即使没有要合并的记忆，也可能需要更新元数据（例如 merged_content）
+            # 所以继续执行，但 merge_memories 调用会是空的
+        else:
+            logger.debug(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
 
         # 1. 调用 GraphStore 的合并功能（转移节点和边）
-        merge_success = self.memory_manager.graph_store.merge_memories(target_id, memories_to_merge)
+        # 使用 to_thread 防止同步操作阻塞事件循环
+        merge_success = await asyncio.to_thread(
+            self.memory_manager.graph_store.merge_memories,
+            target_id,
+            memories_to_merge
+        )
 
         if merge_success:
             # 2. 更新目标记忆的元数据
@@ -884,7 +947,11 @@ class LongTermMemoryManager:
             asyncio.create_task(  # noqa: RUF006
                 self.memory_manager._async_save_graph_store("合并记忆")
             )
-            logger.info(f"合并记忆完成: {source_ids} -> {target_id}")
+
+            # 4. 注册临时ID（如果存在），以便后续操作引用
+            self._register_temp_id(op.target_id, target_id, temp_id_map, force=True)
+
+            logger.debug(f"合并记忆完成: {source_ids} -> {target_id}")
         else:
             logger.error(f"合并记忆失败: {source_ids}")
 
@@ -915,7 +982,7 @@ class LongTermMemoryManager:
         if success:
             # 将embedding生成加入队列，批量处理
             await self._queue_embedding_generation(node_id, content)
-            logger.info(f"创建节点: {content} ({node_type}) -> {memory_id}")
+            logger.debug(f"创建节点: {content} ({node_type}) -> {memory_id}")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             self._register_temp_id(op.target_id, node_id, temp_id_map, force=True)
             self._register_aliases_from_params(
@@ -946,7 +1013,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新节点: {node_id}")
+            logger.debug(f"更新节点: {node_id}")
         else:
             logger.error(f"更新节点失败: {node_id}")
 
@@ -973,10 +1040,13 @@ class LongTermMemoryManager:
         for source_id in sources:
             self.memory_manager.graph_store.merge_nodes(source_id, target_id)
 
-        logger.info(f"合并节点: {sources} -> {target_id}")
+        logger.debug(f"合并节点: {sources} -> {target_id}")
 
     async def _execute_create_edge(
-        self, op: GraphOperation, temp_id_map: dict[str, str]
+        self,
+        op: GraphOperation,
+        temp_id_map: dict[str, str],
+        default_memory_id: str | None = None,
     ) -> None:
         """执行创建边操作"""
         params = self._resolve_parameters(op.parameters, temp_id_map)
@@ -994,23 +1064,56 @@ class LongTermMemoryManager:
             logger.warning("创建边失败: 图存储未初始化")
             return
 
+        # 辅助函数：推断 memory_id
+        def _infer_memory_id(existing_node_id: str) -> str | None:
+            memories = self.memory_manager.graph_store.get_memories_by_node(existing_node_id)
+            if memories:
+                return memories[0].id
+            return None
+
         # 检查和创建节点（如果不存在则创建占位符）
         if not self.memory_manager.graph_store.graph.has_node(source_id):
-            logger.debug(f"源节点不存在，创建占位符节点: {source_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(target_id):
+                memory_id = _infer_memory_id(target_id)
+
+            if not memory_id:
+                logger.warning(f"源节点不存在且无法推断 memory_id，跳过创建: {source_id}")
+                return
+
+            logger.debug(f"源节点不存在，创建占位符节点: {source_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=source_id,
                 node_type="event",
                 content=f"临时节点 - {source_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         if not self.memory_manager.graph_store.graph.has_node(target_id):
-            logger.debug(f"目标节点不存在，创建占位符节点: {target_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(source_id):
+                memory_id = _infer_memory_id(source_id)
+
+            if not memory_id:
+                logger.warning(f"目标节点不存在且无法推断 memory_id，跳过创建: {target_id}")
+                return
+
+            logger.debug(f"目标节点不存在，创建占位符节点: {target_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=target_id,
                 node_type="event",
                 content=f"临时节点 - {target_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         # 现在两个节点都存在，可以创建边
@@ -1024,7 +1127,7 @@ class LongTermMemoryManager:
         )
 
         if edge_id:
-            logger.info(f"创建边: {source_id} -> {target_id} ({relation})")
+            logger.debug(f"创建边: {source_id} -> {target_id} ({relation})")
         else:
             logger.error(f"创建边失败: {op}")
 
@@ -1048,7 +1151,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新边: {edge_id}")
+            logger.debug(f"更新边: {edge_id}")
         else:
             logger.error(f"更新边失败: {edge_id}")
 
@@ -1065,7 +1168,7 @@ class LongTermMemoryManager:
         success = self.memory_manager.graph_store.remove_edge(edge_id)
 
         if success:
-            logger.info(f"删除边: {edge_id}")
+            logger.debug(f"删除边: {edge_id}")
         else:
             logger.error(f"删除边失败: {edge_id}")
 
@@ -1223,7 +1326,7 @@ class LongTermMemoryManager:
                     self.memory_manager.graph_store
                 )
 
-            logger.info(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
+            logger.debug(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
             return {"decayed_count": decayed_count, "total_memories": len(all_memories)}
 
         except Exception as e:

@@ -1,5 +1,5 @@
 [inner]
-version = "1.4.2"
+version = "1.4.3"
 
 # 配置文件版本号迭代规则同bot_config.toml
 
@@ -68,7 +68,7 @@ price_out = 8.0                    # 输出价格（用于API调用统计，单�
 #enable_semantic_variants = false # [可选] 启用语义变体。作为一种扰动策略，生成语义上相似但表达不同的提示。默认为 false。
 
 [[models]]
-model_identifier = "deepseek-ai/DeepSeek-V3."
+model_identifier = "deepseek-ai/DeepSeek-V3.2"
 name = "siliconflow-deepseek-ai/DeepSeek-V3.2"
 api_provider = "SiliconFlow"
 price_in = 2.0

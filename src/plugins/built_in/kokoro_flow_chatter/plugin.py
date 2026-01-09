@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 from src.common.logger import get_logger
 from src.plugin_system import register_plugin
 from src.plugin_system.base.base_plugin import BasePlugin
+from src.plugin_system.base.config_types import ConfigField
 
 from .chatter import KokoroFlowChatter
 from .config import get_config
@@ -34,6 +35,33 @@ class KokoroFlowChatterPlugin(BasePlugin):
     dependencies: ClassVar[list[str]] = []
     python_dependencies: ClassVar[list[str]] = []
     config_file_name: str = "config.toml"
+    generate_config_file: bool = True
+    config_schema = {
+        "main": {
+            "fast_mode_enabled": ConfigField(
+                type=bool,
+                default=False,
+                description="是否启用极速模式（私聊下禁用动作筛选和记忆判官，单次 API 调用）",
+            ),
+        },
+        "llm": {
+            "model_name": ConfigField(
+                type=str,
+                default="",
+                description="KFC 专用模型名称（留空则使用全局默认模型）",
+            ),
+            "temperature": ConfigField(
+                type=float,
+                default=0.8,
+                description="KFC 专用生成温度",
+            ),
+        },
+    }
+
+    config_section_descriptions = {
+        "main": "极速模式设置",
+        "llm": "KFC 专用模型覆盖（可选）",
+    }
 
     # 状态
     _is_started: bool = False

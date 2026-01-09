@@ -1,5 +1,6 @@
 import asyncio
 import io
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -21,6 +22,12 @@ from ..payload_content.tool_option import ToolCall, ToolOption, ToolParam
 from .base_client import APIResponse, BaseClient, UsageRecord, client_registry
 
 logger = get_logger("AioHTTP-Gemini客户端")
+
+# 🔍 性能监控：Session 泄漏检测（保留用于诊断）
+_session_create_count = 0  # Session 创建总数
+_request_count = 0  # 总请求数
+_last_monitor_time = time.time()  # 上次监控时间
+_request_times = []  # 最近请求耗时（保留最近100条）
 
 
 # gemini_thinking参数(默认范围) - 旧版 thinking_budget
@@ -442,11 +449,34 @@ class AiohttpGeminiClient(BaseClient):
         """
         super().__init__(api_provider)
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        self.session: aiohttp.ClientSession | None = None  # 注意：此 session 不再被全局使用
+        # 🔧 修复：创建全局复用的 Session，避免每次请求都创建新 Session
+        self._session: aiohttp.ClientSession | None = None
+        self._session_lock = asyncio.Lock()
 
         # 如果 API provider 中提供了自定义的 base_url，则覆盖默认值
         if api_provider.base_url:
             self.base_url = api_provider.base_url.rstrip("/")
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """获取或创建全局复用的 Session（线程安全）"""
+        if self._session is None or self._session.closed:
+            async with self._session_lock:
+                if self._session is None or self._session.closed:
+                    self._session = aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=300),
+                        headers={
+                            "Content-Type": "application/json",
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        },
+                    )
+                    logger.debug("✅ 创建新的全局 Session（复用模式）")
+        return self._session
+
+    async def _close_session(self):
+        """关闭 Session"""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            logger.debug("🛑 Session 已关闭")
 
     @staticmethod
     def clamp_thinking_budget(tb: int, model_id: str) -> int:
@@ -517,27 +547,23 @@ class AiohttpGeminiClient(BaseClient):
 
         for attempt in range(max_retries):
             try:
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=300),
-                    headers={
-                        "Content-Type": "application/json",
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.113 Safari/537.36",
-                    },
-                ) as session:
-                    if method.upper() == "POST":
-                        response = await session.post(
-                            url, json=data, headers={"Accept": "text/event-stream" if stream else "application/json"}
-                        )
-                    else:
-                        response = await session.get(url)
+                # � 修复：使用全局复用的 Session
+                session = await self._get_session()
 
-                    # 检查HTTP状态码 - 如果是错误，立即失败，不重试
-                    if response.status >= 400:
-                        error_text = await response.text()
-                        raise RespNotOkException(response.status, error_text)
+                if method.upper() == "POST":
+                    response = await session.post(
+                        url, json=data, headers={"Accept": "text/event-stream" if stream else "application/json"}
+                    )
+                else:
+                    response = await session.get(url)
 
-                    # 成功，返回响应
-                    return response
+                # 检查HTTP状态码 - 如果是错误，立即失败，不重试
+                if response.status >= 400:
+                    error_text = await response.text()
+                    raise RespNotOkException(response.status, error_text)
+
+                # 成功，返回响应
+                return response
 
             except aiohttp.ClientError as e:
                 last_exception = e

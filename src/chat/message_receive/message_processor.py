@@ -84,6 +84,7 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
     user_nickname = user_info_payload.get("user_nickname", "")
     user_cardname = user_info_payload.get("user_cardname")
     user_platform = user_info_payload.get("platform", "")
+    user_role = user_info_payload.get("role")  # Extract role
 
     # 提取群组信息
     group_info_payload: GroupInfoPayload | None = message_info.get("group_info")  # type: ignore
@@ -135,6 +136,7 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
         user_nickname=user_nickname,
         user_cardname=user_cardname,
         user_platform=user_platform,
+        user_role=user_role,
         chat_info_stream_id=stream_id,
         chat_info_platform=platform,
         chat_info_create_time=0.0,  # 将由 ChatStream 填充
@@ -350,6 +352,28 @@ async def _process_single_segment(
                 return "[发了一个视频，但格式不支持]"
             else:
                 return ""
+        elif seg_type == "music":
+            # 处理音乐分享卡片
+            try:
+                if isinstance(seg_data, dict):
+                    # 尝试优先获取标题，其次是ID
+                    title = seg_data.get("title")
+                    music_id = seg_data.get("id")
+
+                    if title:
+                        return f"[分享音乐: {title}]"
+                    elif music_id:
+                        return f"[分享音乐, ID: {music_id}]"
+                    else:
+                        # 如果没有标准字段，尝试转储数据内容以便调试或作为后备
+                        return f"[分享音乐, 数据: {seg_data}]"
+
+                elif isinstance(seg_data, str):
+                     return f"[分享音乐, ID: {seg_data}]"
+            except Exception:
+                pass
+            return f"[分享音乐, 原始数据: {seg_data!s}]"
+
         else:
             logger.warning(f"未知的消息段类型: {seg_type}")
             return f"[{seg_type} 消息]"

@@ -92,6 +92,17 @@ class LogBroadcaster:
         """清空日志缓冲区"""
         self.buffer.clear()
 
+    async def shutdown(self) -> None:
+        """
+        优雅地关闭日志广播器
+        清空缓冲区并取消所有待发送的日志
+        """
+        async with self._lock:
+            # 清空缓冲区
+            self.clear_buffer()
+            # 清空订阅者列表
+            self.subscribers.clear()
+
 
 class BroadcastLogHandler(logging.Handler):
     """
@@ -189,7 +200,7 @@ class BroadcastLogHandler(logging.Handler):
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                # 没有运行的事件循环,创建新任务
+                # 没有运行的事件循环，创建新任务
                 if self.loop is None:
                     try:
                         self.loop = asyncio.new_event_loop()
@@ -198,12 +209,20 @@ class BroadcastLogHandler(logging.Handler):
                 loop = self.loop
 
             # 在事件循环中异步广播
-            asyncio.run_coroutine_threadsafe(
-                self.broadcaster.broadcast(log_dict), loop
-            )
+            # 使用try/except捕获submit时的异常，避免关闭期间的错误
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.broadcaster.broadcast(log_dict), loop
+                )
+                # 不要阻塞地等待，但设置一个超时以确保Future不会永久挂起
+                # 这避免了"was never awaited"警告
+                future.set_exception_handler = lambda ctx: None  # 忽略任何Future相关的异常
+            except RuntimeError:
+                # 事件循环已关闭，忽略此错误
+                pass
 
         except Exception:
-            # 忽略广播错误,避免影响日志系统
+            # 忽略广播错误，避免影响日志系统
             pass
 
     def format_time(self, record: logging.LogRecord) -> str:

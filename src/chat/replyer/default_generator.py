@@ -131,6 +131,7 @@ def init_prompt():
 
 {group_chat_reminder_block}
 - 在称呼用户时，请使用更自然的昵称或简称。对于长英文名，可使用首字母缩写；对于中文名，可提炼合适的简称。禁止直接复述复杂的用户名或输出用户名中的任何符号，让称呼更像人类习惯，注意，简称不是必须的，合理的使用。
+- 用户名格式说明：显示名称(辅助信息/用户ID)。例如 "张三(123456)" 或 "管理员(张三/123456)"。括号内为补充信息（如QQ昵称或ID），括号前为当前群聊中的主要称呼。
 你的回复应该是一条简短、且口语化的回复。
 
  --------------------------------
@@ -218,6 +219,7 @@ If you need to use the search tool, please directly call the function "lpmm_sear
 {safety_guidelines_block}
 {group_chat_reminder_block}
 - 在称呼用户时，请使用更自然的昵称或简称。对于长英文名，可使用首字母缩写；对于中文名，可提炼合适的简称。禁止直接复述复杂的用户名或输出用户名中的任何符号，让称呼更像人类习惯，注意，简称不是必须的，合理的使用。
+- 用户名格式说明：显示名称(辅助信息/用户ID)。例如 "张三(123456)" 或 "管理员(张三/123456)"。括号内为补充信息（如QQ昵称或ID），括号前为当前群聊中的主要称呼。
 你的回复应该是一条简短、且口语化的回复。
 
  --------------------------------
@@ -972,17 +974,54 @@ class DefaultReplyer:
                         platform = getattr(user_info, "platform", "") or getattr(msg, "platform", "")
                         user_id = getattr(user_info, "user_id", "") or getattr(msg, "user_id", "")
 
-                        # 获取用户名
+                        # 获取 person_name (备注名)
+                        person_name = None
                         if platform and user_id:
                             person_id = PersonInfoManager.get_person_id(platform, user_id)
                             person_info_manager = get_person_info_manager()
-                            sender_name = await person_info_manager.get_value(person_id, "person_name") or "未知用户"
+                            person_name = await person_info_manager.get_value(person_id, "person_name")
 
-                            # 检查是否是机器人自己，如果是则显示为（你）
-                            if user_id == str(global_config.bot.qq_account):
-                                sender_name = f"{global_config.bot.nickname}(你)"
+                        # user_info 可能是 dict 也可能是 object
+                        user_cardname = getattr(user_info, "user_cardname", None) or (user_info.get("user_cardname") if isinstance(user_info, dict) else None)
+                        user_nickname = getattr(user_info, "user_nickname", None) or (user_info.get("user_nickname") if isinstance(user_info, dict) else None)
+                        user_role = getattr(user_info, "role", None) or (user_info.get("role") if isinstance(user_info, dict) else None)
+
+                        # 1. 尝试使用群名片作为主要显示名称
+                        display_name = user_cardname
+
+                        # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
+                        if not display_name:
+                            display_name = person_name or user_nickname or "某人"
+
+                        # 3. 构建辅助信息（括号内的内容）
+                        aux_info = []
+
+                        # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
+                        if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                            # 只有当昵称不太长时才显示，避免刷屏
+                            if len(user_nickname) < 10:
+                                aux_info.append(user_nickname)
+
+                        # 4. 添加 QQ 号（这是最稳定的标识符）
+                        if user_id != str(global_config.bot.qq_account):
+                            aux_info.append(user_id)
+
+                        # 处理群身份前缀
+                        role_prefix = ""
+                        if user_role == "owner":
+                            role_prefix = "[群主]"
+                        elif user_role == "admin":
+                            role_prefix = "[管理员]"
+
+                        # 5. 组合最终名称
+                        if aux_info:
+                            sender_name = f"{role_prefix}{display_name}({'/'.join(aux_info)})"
                         else:
-                            sender_name = "未知用户"
+                            sender_name = f"{role_prefix}{display_name}"
+
+                        # 检查是否是机器人自己，如果是则显示为（你）
+                        if user_id == str(global_config.bot.qq_account):
+                            sender_name = f"{global_config.bot.nickname}(你)"
 
                         # 处理消息内容中的用户引用，确保bot回复在消息内容中也正确显示
                         from src.chat.utils.chat_message_builder import replace_user_references_async
@@ -1074,17 +1113,54 @@ class DefaultReplyer:
                 platform = user_info.get("platform") or msg.get("platform", "")
                 user_id = user_info.get("user_id") or msg.get("user_id", "")
 
-                # 获取用户名
+                # 获取 person_name (备注名)
+                person_name = None
                 if platform and user_id:
                     person_id = PersonInfoManager.get_person_id(platform, user_id)
                     person_info_manager = get_person_info_manager()
-                    sender_name = await person_info_manager.get_value(person_id, "person_name") or "未知用户"
+                    person_name = await person_info_manager.get_value(person_id, "person_name")
 
-                    # 检查是否是机器人自己，如果是则显示为（你）
-                    if user_id == str(global_config.bot.qq_account):
-                        sender_name = f"{global_config.bot.nickname}(你)"
+                # 从 user_info 字典中获取信息
+                user_cardname = user_info.get("user_cardname")
+                user_nickname = user_info.get("user_nickname")
+                user_role = user_info.get("role")
+
+                # 1. 尝试使用群名片作为主要显示名称
+                display_name = user_cardname
+
+                # 2. 如果没有群名片，使用 person_name（备注名）或 user_nickname（QQ昵称）
+                if not display_name:
+                    display_name = person_name or user_nickname or "某人"
+
+                # 3. 构建辅助信息（括号内的内容）
+                aux_info = []
+
+                # 如果主要显示的是群名片，且有不同的 QQ 昵称，则添加 QQ 昵称
+                if display_name == user_cardname and user_nickname and user_nickname != display_name:
+                    # 只有当昵称不太长时才显示，避免刷屏
+                    if len(user_nickname) < 10:
+                        aux_info.append(user_nickname)
+
+                # 4. 添加 QQ 号（这是最稳定的标识符）
+                if user_id != str(global_config.bot.qq_account):
+                    aux_info.append(user_id)
+
+                # 处理群身份前缀
+                role_prefix = ""
+                if user_role == "owner":
+                    role_prefix = "[群主]"
+                elif user_role == "admin":
+                    role_prefix = "[管理员]"
+
+                # 5. 组合最终名称
+                if aux_info:
+                    sender_name = f"{role_prefix}{display_name}({'/'.join(aux_info)})"
                 else:
-                    sender_name = "未知用户"
+                    sender_name = f"{role_prefix}{display_name}"
+
+                # 检查是否是机器人自己，如果是则显示为（你）
+                if user_id == str(global_config.bot.qq_account):
+                    sender_name = f"{global_config.bot.nickname}(你)"
 
                 # 处理消息内容中的用户引用，确保bot回复在消息内容中也正确显示
                 from src.chat.utils.chat_message_builder import replace_user_references_async
@@ -1540,6 +1616,31 @@ class DefaultReplyer:
         if is_group_chat:
             group_chat_reminder_block = "注意：在规划回复时，务必确定对方是不是真的在叫自己。聊天时往往有数百甚至数千个用户，请务必认清自己的身份和角色，避免误以为对方在和自己对话而贸然插入回复，导致尴尬局面。"
 
+            # 获取Bot在群内的身份
+            try:
+                if global_config.bot.qq_account and chat_stream.group_info:
+                    # 尝试将 group_id 和 user_id 转为 int
+                    try:
+                        g_id = int(chat_stream.group_info.group_id)
+                        u_id = int(global_config.bot.qq_account)
+
+                        # 延迟导入以避免循环依赖
+                        from src.plugins.built_in.napcat_adapter.src.handlers.utils import get_member_info
+
+                        bot_member_info = await get_member_info(g_id, u_id)
+                        if bot_member_info:
+                            role = bot_member_info.get("role")
+                            if role == "owner":
+                                group_chat_reminder_block += "\n- **你是本群群主**"
+                            elif role == "admin":
+                                group_chat_reminder_block += "\n- **你是本群管理员**"
+                    except (ValueError, TypeError):
+                        pass
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"获取Bot群身份失败: {e}")
+
         # 使用新的统一Prompt系统 - 创建PromptParameters
         prompt_parameters = PromptParameters(
             platform=platform,
@@ -1588,8 +1689,8 @@ class DefaultReplyer:
         # normal: 对未读消息的统一回应
         template_name = "s4u_style_prompt" if prompt_mode == "s4u" else "normal_style_prompt"
 
-        # 获取模板内容
-        template_prompt = await global_prompt_manager.get_prompt_async(template_name)
+        # 获取模板内容 - 传入parameters以便注入组件能获取正确的chat_id等信息
+        template_prompt = await global_prompt_manager.get_prompt_async(template_name, parameters=prompt_parameters)
         prompt = Prompt(template=template_prompt.template, parameters=prompt_parameters)
         prompt_text = await prompt.build()
 
@@ -1886,7 +1987,7 @@ class DefaultReplyer:
             # 获取 RelationshipFetcher 实例
             relationship_fetcher = relationship_fetcher_manager.get_fetcher(chat_id)
 
-            # 构建用户关系信息（包含别名、偏好关键词等新字段）
+            # 构建用户关系信息（包含偏好关键词等新字段，别名已禁用）
             user_relation_info = await relationship_fetcher.build_relation_info(person_id, points_num=5)
 
             # 构建聊天流印象信息
@@ -2036,8 +2137,8 @@ class DefaultReplyer:
                 "stream_id": stream.stream_id,
             }
 
-            if memory_aliases:
-                memory_context["user_aliases"] = memory_aliases
+            # if memory_aliases:
+            #     memory_context["user_aliases"] = memory_aliases
 
             if group_info_obj is not None:
                 group_name = getattr(group_info_obj, "group_name", None) or getattr(
