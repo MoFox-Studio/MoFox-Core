@@ -190,9 +190,13 @@ def _process_delta(
             else:
                 logger.warning("工具调用索引号大于等于缓冲区长度，但缺少ID或函数信息。")
 
+        # 确保索引在有效范围内才访问buffer
         if tool_call_delta.function and tool_call_delta.function.arguments:
-            # 如果有工具调用参数，则添加到对应的工具调用的参数串缓冲区中
-            tool_calls_buffer[tool_call_delta.index][2].write(tool_call_delta.function.arguments)
+            if tool_call_delta.index < len(tool_calls_buffer):
+                # 如果有工具调用参数，则添加到对应的工具调用的参数串缓冲区中
+                tool_calls_buffer[tool_call_delta.index][2].write(tool_call_delta.function.arguments)
+            else:
+                logger.warning(f"工具调用索引 {tool_call_delta.index} 超出缓冲区范围 {len(tool_calls_buffer)}，跳过参数写入。")
 
     return in_rc_flag
 
