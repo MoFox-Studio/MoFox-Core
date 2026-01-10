@@ -292,11 +292,13 @@ class ImageManager:
                     if description and description.strip():
                         break  # 成功获取描述则跳出循环
                 except Exception as e:
-                    logger.error(f"VLM调用失败 (第 {i+1}/3 次): {e}")
-
-                if i < 2: # 如果不是最后一次，则等待1秒
-                    logger.warning("识图失败，将在1秒后重试...")
-                    await asyncio.sleep(1)
+                    # 简化日志：只显示错误类型和简短消息
+                    error_brief = f"{type(e).__name__}: {str(e)[:80]}"
+                    if i < 2:
+                        logger.warning(f"VLM调用失败 (第 {i+1}/3 次): {error_brief}，1秒后重试...")
+                        await asyncio.sleep(1)
+                    else:
+                        logger.error(f"VLM调用失败 (第 {i+1}/3 次，已达最大重试): {error_brief}")
 
             if not description or not description.strip():
                 logger.warning("VLM未能生成有效描述")

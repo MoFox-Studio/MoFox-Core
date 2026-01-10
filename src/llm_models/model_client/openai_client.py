@@ -357,7 +357,9 @@ def _default_normal_response_parser(
         raise RespParseException(resp, "响应解析失败，缺失choices字段")
 
     if not resp.choices or len(resp.choices) == 0:
-        logger.error(f"[非流式响应] choices 列表为空。resp: {resp}, choices: {resp.choices}")
+        # 简化日志：只打印关键信息，避免完整对象输出
+        usage_info = f"tokens={resp.usage.total_tokens}" if hasattr(resp, 'usage') and resp.usage else "no usage"
+        logger.error(f"[非流式响应] choices 列表为空 (model={resp.model}, {usage_info})")
         raise RespParseException(resp, "响应解析失败，choices列表为空")
 
     logger.debug(f"[非流式响应] choices 长度: {len(resp.choices)}")
