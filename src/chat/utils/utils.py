@@ -177,119 +177,98 @@ async def get_recent_group_speaker(chat_stream_id: str, sender, limit: int = 12)
     return who_chat_in_group
 
 
-def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
-    """将文本分割成句子，并根据概率合并
-    1. 识别分割点（, ， 。 ; 空格），但如果分割点左右都是英文字母则不分割。
-    2. 将文本分割成 (内容, 分隔符) 的元组。
-    3. 根据原始文本长度计算合并概率，概率性地合并相邻段落。
-    注意：此函数假定颜文字已在上层被保护。
-    Args:
-        text: 要分割的文本字符串 (假定颜文字已被保护)
-    Returns:
-        List[str]: 分割和合并后的句子列表
+def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
+    """智能文本分割算法 (修正版)
+    1. 句子内部标点完全保留。
+    2. 仅在最终分割点移除逗号/句号。
+    3. 采用“带权重的最短相邻合并”，优先保留句号完整性。
     """
-    # 预处理：处理多余的换行符
-    # 1. 将连续的换行符替换为单个换行符
-    text = re.sub(r"\n\s*\n+", "\n", text)
-    # 2. 处理换行符和其他分隔符的组合
-    text = re.sub(r"\n\s*([，,。;\s])", r"\1", text)
-    text = re.sub(r"([，,。;\s])\s*\n", r"\1", text)
+    if not text:
+        return []
 
-    # 处理两个汉字中间的换行符
-    text = re.sub(r"([\u4e00-\u9fff])\n([\u4e00-\u9fff])", r"\1。\2", text)
+    # --- 1. 预处理与保护 ---
+    url_pattern = r'https?://[^\s，。！？”）》]+'
+    urls = re.findall(url_pattern, text)
+    for idx, url in enumerate(urls):
+        text = text.replace(url, f"__URL_PROTECT_{idx}__")
 
-    len_text = len(text)
-    if len_text < 3:
-        return list(text) if random.random() < 0.01 else [text]
+    pair_pattern = r'([（\(《「].*?[）\)》」])'
+    pairs = re.findall(pair_pattern, text)
+    for idx, pair in enumerate(pairs):
+        text = text.replace(pair, f"__PAIR_PROTECT_{idx}__")
 
-    # 定义分隔符
-    separators = {"，", ",", " ", "。", ";"}
+    # --- 2. 初始切分 ---
+    # 匹配所有标点作为潜在分割点，并捕获标点
+    # 包含：。，,！!？?；; \n ~ ～ ♪ …
+    punct_pattern = r'([。，,！!？?；;\n\r\t\s~～♪…]+)'
+    raw_parts = re.split(punct_pattern, text)
+    
+    # 组合成 (内容 + 标点) 的片段
     segments = []
-    current_segment = ""
+    for i in range(0, len(raw_parts) - 1, 2):
+        content = raw_parts[i]
+        punct = raw_parts[i+1]
+        if content or punct:
+            segments.append(content + punct)
+    if len(raw_parts) % 2 != 0 and raw_parts[-1]:
+        segments.append(raw_parts[-1])
 
-    # 1. 分割成 (内容, 分隔符) 元组
-    i = 0
-    while i < len(text):
-        char = text[i]
-        if char in separators:
-            # 检查分割条件：如果分隔符左右都是英文字母，则不分割
-            can_split = True
-            if 0 < i < len(text) - 1:
-                prev_char = text[i - 1]
-                next_char = text[i + 1]
-                # if is_english_letter(prev_char) and is_english_letter(next_char) and char == ' ': # 原计划只对空格应用此规则，现应用于所有分隔符
-                if is_english_letter(prev_char) and is_english_letter(next_char):
-                    can_split = False
-
-            if can_split:
-                # 只有当当前段不为空时才添加
-                if current_segment:
-                    segments.append((current_segment, char))
-                # 如果当前段为空，但分隔符是空格，则也添加一个空段（保留空格）
-                elif char == " ":
-                    segments.append(("", char))
-                current_segment = ""
-            else:
-                # 不分割，将分隔符加入当前段
-                current_segment += char
-        else:
-            current_segment += char
-        i += 1
-
-    # 添加最后一个段（没有后续分隔符）
-    if current_segment:
-        segments.append((current_segment, ""))
-
-    # 过滤掉完全空的段（内容和分隔符都为空）
-    segments = [(content, sep) for content, sep in segments if content or sep]
-
-    # 如果分割后为空（例如，输入全是分隔符且不满足保留条件），恢复颜文字并返回
     if not segments:
-        return [text] if text else []  # 如果原始文本非空，则返回原始文本（可能只包含未被分割的字符或颜文字占位符）
+        return [text]
 
-    # 2. 概率合并
-    if len_text < 12:
-        split_strength = 0.2
-    elif len_text < 32:
-        split_strength = 0.6
-    else:
-        split_strength = 0.7
-    # 合并概率与分割强度相反
-    merge_probability = 1.0 - split_strength
+    # --- 3. 带权重的最短相邻合并 ---
+    # 阻力系数：阻力越大，越不容易被合并（即越倾向于在这里断开）
+    def get_merge_resistance(segment: str) -> float:
+        s = segment.strip()
+        if not s: return 0.1
+        if s.endswith(("。", "！", "!", "？", "?", "；", ";", "\n")):
+            return 5.0  # 强断句，阻力大
+        if s.endswith(("，", ",", "~", "～", "♪", "…")):
+            return 1.5  # 弱断句，阻力中
+        return 0.5      # 无标点或空格，阻力小
 
-    merged_segments = []
-    idx = 0
-    while idx < len(segments):
-        current_content, current_sep = segments[idx]
-
-        # 检查是否可以与下一段合并
-        # 条件：不是最后一段，且随机数小于合并概率，且当前段有内容（避免合并空段）
-        if idx + 1 < len(segments) and random.random() < merge_probability and current_content:
-            next_content, next_sep = segments[idx + 1]
-            # 合并: (内容1 + 分隔符1 + 内容2, 分隔符2)
-            # 只有当下一段也有内容时才合并文本，否则只传递分隔符
-            if next_content:
-                merged_content = current_content + current_sep + next_content
-                merged_segments.append((merged_content, next_sep))
-            else:  # 下一段内容为空，只保留当前内容和下一段的分隔符
-                merged_segments.append((current_content, next_sep))
-
-            idx += 2  # 跳过下一段，因为它已被合并
+    while len(segments) > max_sentence_num:
+        min_score = float('inf')
+        merge_idx = -1
+        
+        for i in range(len(segments) - 1):
+            # 评分公式：(长度和) * (左侧片段的合并阻力)
+            # 阻力越大，评分越高，越不容易被选中合并
+            combined_len = len(segments[i]) + len(segments[i+1])
+            resistance = get_merge_resistance(segments[i])
+            score = combined_len * resistance
+            
+            if score < min_score:
+                min_score = score
+                merge_idx = i
+        
+        if merge_idx != -1:
+            segments[merge_idx] = segments[merge_idx] + segments[merge_idx+1]
+            del segments[merge_idx+1]
         else:
-            # 不合并，直接添加当前段
-            merged_segments.append((current_content, current_sep))
-            idx += 1
+            break
 
-    # 提取最终的句子内容
-    final_sentences = [content for content, sep in merged_segments if content]  # 只保留有内容的段
+    # --- 4. 恢复保护内容与分割点清理 ---
+    def final_clean(s: str, is_last: bool) -> str:
+        # 恢复保护内容
+        for idx, url in enumerate(urls):
+            s = s.replace(f"__URL_PROTECT_{idx}__", url)
+        for idx, pair in enumerate(pairs):
+            s = s.replace(f"__PAIR_PROTECT_{idx}__", pair)
+        
+        s = s.strip()
+        # 只有在非最后一句的末尾，才移除逗号/句号/换行符
+        if not is_last:
+            s = re.sub(r'[，,。；;\n\r\t]+$', '', s)
+        return s
 
-    # 清理可能引入的空字符串和仅包含空白的字符串
-    final_sentences = [
-        s for s in final_sentences if s.strip()
-    ]  # 过滤掉空字符串以及仅包含空白（如换行符、空格）的字符串
+    result = []
+    for i, seg in enumerate(segments):
+        cleaned = final_clean(seg, i == len(segments) - 1)
+        if cleaned:
+            result.append(cleaned)
 
-    logger.debug(f"分割并合并后的句子: {final_sentences}")
-    return final_sentences
+    return result
 
 
 def random_remove_punctuation(text: str) -> str:
@@ -467,8 +446,8 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
             split_sentences_raw = cleaned_text.split("[SPLIT]")
             split_sentences = [s.strip() for s in split_sentences_raw if s.strip()]
         else:
-            logger.debug("使用基于标点的传统模式进行分割。")
-            split_sentences = split_into_sentences_w_remove_punctuation(cleaned_text)
+            logger.debug("使用智能标点模式进行分割。")
+            split_sentences = smart_split_text(cleaned_text, max_sentence_num)
     else:
         logger.debug("回复分割器已禁用。")
         split_sentences = [cleaned_text]
@@ -485,37 +464,7 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
         else:
             sentences.append(sentence)
 
-    # 如果分割后的句子数量超过上限，则启动智能合并逻辑
-    if len(sentences) > max_sentence_num:
-        logger.info(f"分割后消息数量 ({len(sentences)}) 超过上限 ({max_sentence_num})，启动智能合并...")
-
-        # 计算需要合并的次数
-        num_to_merge = len(sentences) - max_sentence_num
-
-        for _ in range(num_to_merge):
-            # 如果句子数量已经达标，提前退出
-            if len(sentences) <= max_sentence_num:
-                break
-
-            # 寻找最短的相邻句子对
-            min_len = float("inf")
-            merge_idx = -1
-            for i in range(len(sentences) - 1):
-                combined_len = len(sentences[i]) + len(sentences[i+1])
-                if combined_len < min_len:
-                    min_len = combined_len
-                    merge_idx = i
-
-            # 如果找到了可以合并的对，则执行合并
-            if merge_idx != -1:
-                # 将后一个句子合并到前一个句子
-                # 我们在合并时保留原始标点（如果有的话），或者添加一个逗号来确保可读性
-                merged_sentence = sentences[merge_idx] + "，" + sentences[merge_idx + 1]
-                sentences[merge_idx] = merged_sentence
-                # 删除后一个句子
-                del sentences[merge_idx + 1]
-
-        logger.info(f"智能合并完成，最终消息数量: {len(sentences)}")
+    # 移除冗余的二次合并逻辑，因为 smart_split_text 已经处理了数量限制
 
     # if extracted_contents:
     #     for content in extracted_contents:
