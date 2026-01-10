@@ -81,6 +81,18 @@ class PromptBuilder:
         memory_block = ""
         tool_info = ""
         expression_habits = ""
+        schedule_block = ""
+
+        # Planner 阶段也获取日程信息，因为它对决策很重要（比如深夜不该建议去逛街）
+        if chat_stream:
+            try:
+                if self._context_builder is None:
+                    from ..context_builder import KFCContextBuilder
+                    self._context_builder = KFCContextBuilder
+                builder = self._context_builder(chat_stream)
+                schedule_block = await builder._build_schedule_block()
+            except Exception as e:
+                logger.debug(f"Planner 获取日程信息失败: {e}")
 
         # 3. 构建活动流
         activity_stream = await self._build_activity_stream(session, user_name)
@@ -112,6 +124,7 @@ class PromptBuilder:
             expression_habits=expression_habits or "（根据自然对话风格回复即可）",
             activity_stream=activity_stream or "（这是你们第一次聊天）",
             current_situation=current_situation,
+            schedule_block=schedule_block,
             chat_history_block=chat_history_block,
             available_actions=actions_block,
             output_format=output_format,
@@ -159,6 +172,7 @@ class PromptBuilder:
         memory_block = context_data.get("memory_block", "")
         tool_info = context_data.get("tool_info", "")
         expression_habits = self._build_combined_expression_block(context_data.get("expression_habits", ""))
+        schedule_block = context_data.get("schedule", "")
 
         # 3. 构建活动流
         activity_stream = await self._build_activity_stream(session, user_name)
@@ -187,6 +201,7 @@ class PromptBuilder:
             tool_info=tool_info or "（暂无工具信息）",
             activity_stream=activity_stream or "（这是你们第一次聊天）",
             current_situation=current_situation,
+            schedule_block=schedule_block,
             chat_history_block=chat_history_block,
             expression_habits=expression_habits or "（根据自然对话风格回复即可）",
             thought=thought,
@@ -1243,6 +1258,7 @@ class PromptBuilder:
         memory_block = context_data.get("memory_block", "")
         tool_info = context_data.get("tool_info", "")
         expression_habits = self._build_combined_expression_block(context_data.get("expression_habits", ""))
+        schedule_block = context_data.get("schedule", "")
 
         # 3. 构建活动流
         activity_stream = await self._build_activity_stream(session, user_name)
@@ -1273,6 +1289,7 @@ class PromptBuilder:
             expression_habits=expression_habits or "（根据自然对话风格回复即可）",
             activity_stream=activity_stream or "（这是你们第一次聊天）",
             current_situation=current_situation,
+            schedule_block=schedule_block,
             chat_history_block=chat_history_block,
             available_actions=actions_block,
             output_format=output_format,

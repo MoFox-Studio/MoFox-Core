@@ -178,11 +178,11 @@ async def get_recent_group_speaker(chat_stream_id: str, sender, limit: int = 12)
 
 
 def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
-    """智能文本分割算法 (灵动版)
+    """智能文本分割算法
     1. 句子内部标点完全保留。
-    2. 引入基于长度和标点类型的随机合并概率，保留长文本能力。
-    3. 仅在最终分割点移除冗余标点。
-    4. 确保最终条数不超过上限，但不强行分满。
+    2. 采用“全局最小代价合并”算法，优先合并空格和逗号，保护句号。
+    3. 引入动态阈值和随机扰动，保留长文本能力与灵动感。
+    4. 仅在最终分割点移除冗余标点（含换行符）。
     """
     if not text:
         return []
@@ -203,84 +203,96 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
     punct_pattern = r'([。，,！!？?；;\n\r\t\s~～♪…]+)'
     raw_parts = re.split(punct_pattern, text)
     
-    initial_segments = []
+    segments = []
     for i in range(0, len(raw_parts) - 1, 2):
         content = raw_parts[i]
         punct = raw_parts[i+1]
         if content or punct:
-            initial_segments.append(content + punct)
+            segments.append(content + punct)
     if len(raw_parts) % 2 != 0 and raw_parts[-1]:
-        initial_segments.append(raw_parts[-1])
+        segments.append(raw_parts[-1])
 
-    if not initial_segments:
+    if not segments:
         return [text]
 
-    # --- 3. 启发式随机合并 ---
-    # 目标：在上限之内，根据概率决定是否断开
-    def get_merge_probability(segment: str, total_len: int) -> float:
+    # --- 3. 全局最小代价合并 ---
+    def get_merge_info(segment: str, total_len: int) -> tuple[float, float]:
+        """返回 (阻力系数, 合并概率)
+        阻力系数：用于全局排序，越大越不容易合并。
+        合并概率：用于随机决策，越小越倾向于断开。
+        """
         s = segment.strip()
-        if not s: return 1.0
+        if not s: return 1.0, 1.0
         
-        # 基础概率：全文越长，越倾向于断开（合并概率越低）
-        # 长度 < 20: 0.9, 长度 > 100: 0.3
-        base_prob = max(0.3, min(0.9, 1.0 - (total_len / 200)))
+        # 基础合并概率：全文越长，合并概率越低（倾向于多发几条）
+        base_prob = max(0.2, min(0.8, 1.0 - (total_len / 500)))
         
-        # 标点修正
-        if s.endswith(("。", "！", "!", "？", "?", "；", ";", "\n")):
-            return base_prob * 0.2  # 强断句，极少合并
-        if s.endswith(("，", ",", "~", "～", "♪", "…")):
-            return base_prob * 0.7  # 弱断句，有一定概率合并
-        return 0.95  # 无标点或空格，几乎总是合并
-
-    segments = []
-    if initial_segments:
-        current_buffer = initial_segments[0]
-        total_text_len = len(text)
-        
-        for i in range(1, len(initial_segments)):
-            next_seg = initial_segments[i]
-            # 决定是否合并
-            prob = get_merge_probability(current_buffer, total_text_len)
+        # 换行符：绝对的分割点，阻力最高，合并概率最低
+        if any(c in s for c in "\n\r\t"):
+            return 50.0, 0.01
             
-            # 长度修正：如果当前缓冲区太短（< 8字），强制提升合并概率
-            if len(current_buffer.strip()) < 8:
-                prob = max(prob, 0.9)
+        # 强标点（句号、分号）：用户认为“不好看”，优先作为分割点（即不合并）
+        if s.endswith(("。", "；", ";")):
+            return 20.0, base_prob * 0.1  # 极高阻力，极低合并率
+            
+        # 情感标点（问号、感叹号）：虽然也是强断句，但比句号更有保留价值
+        if s.endswith(("！", "!", "？", "?")):
+            return 15.0, base_prob * 0.2
+            
+        # 弱标点（逗号、波浪号、♪）：合并后观感好，阻力小，合并率高
+        if s.endswith(("，", ",", "~", "～", "♪", "…")):
+            return 2.0, base_prob * 0.8
+            
+        # 无标点或空格：最优先合并
+        return 1.1, 0.95
 
-            if random.random() < prob:
-                current_buffer += next_seg
-            else:
-                segments.append(current_buffer)
-                current_buffer = next_seg
-        segments.append(current_buffer)
+    # 尝试进行概率合并
+    # 我们进行多轮尝试，直到无法再合并或达到上限
+    changed = True
+    while changed and len(segments) > 1:
+        changed = False
+        # 计算所有缝隙的合并代价
+        gap_scores = []
+        for i in range(len(segments) - 1):
+            res, prob = get_merge_info(segments[i], len(text))
+            # 长度修正：如果当前片段太短，强制提升合并概率
+            if len(segments[i].strip()) < 8: prob = max(prob, 0.9)
+            
+            score = (len(segments[i]) + len(segments[i+1])) * res
+            gap_scores.append({'idx': i, 'score': score, 'prob': prob})
+        
+        # 按代价从小到大排序，优先尝试合并代价小的
+        gap_scores.sort(key=lambda x: x['score'])
+        
+        for gap in gap_scores:
+            # 如果条数已经没超限，且随机合并没通过，则保留这个断句
+            if len(segments) <= max_sentence_num and random.random() > gap['prob']:
+                continue
+            
+            # 执行合并
+            idx = gap['idx']
+            segments[idx] += segments[idx+1]
+            del segments[idx+1]
+            changed = True
+            break # 每次合并后重新计算全局代价，保证最优性
 
-    # --- 4. 硬上限兜底 (仅在超限时触发) ---
+    # 硬上限兜底：如果随机合并后依然超限，强制按代价合并
     while len(segments) > max_sentence_num:
         min_score = float('inf')
         merge_idx = -1
-        
         for i in range(len(segments) - 1):
-            # 寻找最值得合并的相邻对
-            combined_len = len(segments[i]) + len(segments[i+1])
-            # 阻力系数
-            s = segments[i].strip()
-            resistance = 1.0
-            if s.endswith(("。", "！", "!", "？", "?", "；", ";", "\n")):
-                resistance = 5.0
-            elif s.endswith(("，", ",", "~", "～", "♪", "…")):
-                resistance = 1.5
-            
-            score = combined_len * resistance
+            res, _ = get_merge_info(segments[i], len(text))
+            score = (len(segments[i]) + len(segments[i+1])) * res
             if score < min_score:
                 min_score = score
                 merge_idx = i
-        
         if merge_idx != -1:
-            segments[merge_idx] = segments[merge_idx] + segments[merge_idx+1]
+            segments[merge_idx] += segments[merge_idx+1]
             del segments[merge_idx+1]
         else:
             break
 
-    # --- 5. 恢复保护内容与分割点清理 ---
+    # --- 4. 恢复保护内容与分割点清理 ---
     def final_clean(s: str, is_last: bool) -> str:
         for idx, url in enumerate(urls):
             s = s.replace(f"__URL_PROTECT_{idx}__", url)
@@ -289,7 +301,7 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
         
         s = s.strip()
         if not is_last:
-            # 仅在分割点移除冗余标点
+            # 仅在分割点移除冗余标点（含换行符）
             s = re.sub(r'[，,。；;\n\r\t]+$', '', s)
         return s
 
