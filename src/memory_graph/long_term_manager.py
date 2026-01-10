@@ -63,6 +63,9 @@ class LongTermMemoryManager:
         self._pending_embeddings: list[tuple[str, str]] = []  # (node_id, content)
         self._embedding_batch_size = 10
         self._embedding_lock = asyncio.Lock()
+        self._failed_embedding_nodes: set[str] = set()  # 记录失败的节点ID，避免重复尝试
+        self._embedding_retry_limit = 3  # 每个节点最大重试次数
+        self._embedding_failed_count = 0  # 失败计数
 
         # 相似记忆缓存 (stm_id -> memories)
         self._similar_memory_cache: dict[str, list[Memory]] = {}
@@ -1174,6 +1177,11 @@ class LongTermMemoryManager:
 
     async def _queue_embedding_generation(self, node_id: str, content: str) -> None:
         """将节点加入embedding生成队列"""
+        # 检查是否已经失败过多次
+        if node_id in self._failed_embedding_nodes:
+            logger.debug(f"节点 {node_id} 已标记为失败，跳过embedding生成")
+            return
+
         # 先在锁内写入，再在锁外触发批量处理，避免自锁
         should_flush = False
         async with self._embedding_lock:
@@ -1202,10 +1210,14 @@ class LongTermMemoryManager:
             embeddings = await self.memory_manager.embedding_generator.generate_batch(contents)
 
             if not embeddings or len(embeddings) != len(batch):
-                logger.warning("批量生成embedding失败或数量不匹配")
-                # 回退到单个生成
-                for node_id, content in batch:
-                    await self._generate_node_embedding_single(node_id, content)
+                logger.warning(
+                    f"批量生成embedding失败或数量不匹配 (期望{len(batch)}, 实际{len(embeddings) if embeddings else 0})"
+                )
+                self._embedding_failed_count += len(batch)
+                # 将失败的节点标记，避免无限重试
+                for node_id, _ in batch:
+                    self._failed_embedding_nodes.add(node_id)
+                logger.info(f"已将 {len(batch)} 个节点标记为embedding失败，不再重试")
                 return
 
             # 批量添加到向量库
@@ -1234,15 +1246,25 @@ class LongTermMemoryManager:
                 logger.debug(f"批量生成 {len(nodes)} 个节点的embedding")
 
         except Exception as e:
-            logger.error(f"批量生成embedding失败: {e}")
-            # 回退到单个生成
-            for node_id, content in batch:
-                await self._generate_node_embedding_single(node_id, content)
+            logger.error(f"批量生成embedding异常: {e}")
+            self._embedding_failed_count += len(batch)
+            # 将失败的节点标记，避免无限重试
+            for node_id, _ in batch:
+                self._failed_embedding_nodes.add(node_id)
+            logger.info(f"已将 {len(batch)} 个节点标记为embedding失败，不再重试")
 
     async def _generate_node_embedding_single(self, node_id: str, content: str) -> None:
-        """为单个节点生成 embedding 并存入向量库（回退方法）"""
+        """为单个节点生成 embedding 并存入向量库（回退方法）
+        
+        注意：此方法不应再将失败的节点重新加入队列，避免无限循环
+        """
         try:
             if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
+                return
+
+            # 检查是否已标记为失败
+            if node_id in self._failed_embedding_nodes:
+                logger.debug(f"节点 {node_id} 已标记为失败，跳过单个生成")
                 return
 
             embedding = await self.memory_manager.embedding_generator.generate(content)
@@ -1258,8 +1280,17 @@ class LongTermMemoryManager:
                 node.mark_vector_stored()
                 if self.memory_manager.graph_store.graph.has_node(node_id):
                     self.memory_manager.graph_store.graph.nodes[node_id]["has_vector"] = True
+                logger.debug(f"单个生成节点 {node_id} 的embedding成功")
+            else:
+                # embedding为None，标记为失败
+                self._failed_embedding_nodes.add(node_id)
+                self._embedding_failed_count += 1
+                logger.warning(f"节点 {node_id} embedding生成返回None，已标记为失败")
         except Exception as e:
-            logger.warning(f"生成节点 embedding 失败: {e}")
+            # 异常时标记为失败，避免重复尝试
+            self._failed_embedding_nodes.add(node_id)
+            self._embedding_failed_count += 1
+            logger.warning(f"生成节点 {node_id} embedding失败: {e}，已标记为失败")
 
     async def apply_long_term_decay(self) -> dict[str, Any]:
         """
@@ -1341,6 +1372,11 @@ class LongTermMemoryManager:
         stats = self.memory_manager.get_statistics()
         stats["decay_factor"] = self.long_term_decay_factor
         stats["batch_size"] = self.batch_size
+        stats["embedding_stats"] = {
+            "failed_count": self._embedding_failed_count,
+            "failed_nodes": len(self._failed_embedding_nodes),
+            "pending_count": len(self._pending_embeddings),
+        }
 
         return stats
 
@@ -1351,6 +1387,14 @@ class LongTermMemoryManager:
 
         try:
             logger.info("正在关闭长期记忆管理器...")
+
+            # 输出embedding统计信息
+            if self._embedding_failed_count > 0:
+                logger.warning(
+                    f"Embedding生成统计: 失败次数={self._embedding_failed_count}, "
+                    f"失败节点数={len(self._failed_embedding_nodes)}, "
+                    f"待处理数={len(self._pending_embeddings)}"
+                )
 
             # 清空待处理的embedding队列
             await self._flush_pending_embeddings()
