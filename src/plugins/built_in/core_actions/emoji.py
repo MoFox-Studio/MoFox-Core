@@ -71,9 +71,10 @@ class EmojiAction(BaseAction):
 
     # 动作使用场景
     action_require: ClassVar = [
-        "发送表情包辅助表达情绪",
-        "表达情绪时可以选择使用",
-        "不要连续发送，如果你已经发过[表情包]，就不要选择此动作",
+    "1. 用户明确要求使用表情包。",
+    "2. 当前的对话氛围很适合用表情来活跃气氛。",
+    "3. 发送表情包能让互动变得更有趣、更生动。",
+    "4. 请像正常人一样自然地使用表情包，不要过度依赖，也不要刷屏哦。",
     ]
 
     # 关联类型
@@ -86,6 +87,8 @@ class EmojiAction(BaseAction):
             return await self._llm_judge_activation(
                 judge_prompt=self.llm_judge_prompt, llm_judge_model=llm_judge_model
             )
+        if global_config.emoji.emoji_activate_type == "always":
+            return True
         return await self._random_activation(global_config.emoji.emoji_chance)
 
     async def execute(self) -> tuple[bool, str]:

@@ -190,9 +190,15 @@ def _process_delta(
             else:
                 logger.warning("工具调用索引号大于等于缓冲区长度，但缺少ID或函数信息。")
 
+        # 确保索引在有效范围内才访问buffer
         if tool_call_delta.function and tool_call_delta.function.arguments:
-            # 如果有工具调用参数，则添加到对应的工具调用的参数串缓冲区中
-            tool_calls_buffer[tool_call_delta.index][2].write(tool_call_delta.function.arguments)
+            if tool_call_delta.index < len(tool_calls_buffer):
+                # 如果有工具调用参数，则添加到对应的工具调用的参数串缓冲区中
+                tool_calls_buffer[tool_call_delta.index][2].write(tool_call_delta.function.arguments)
+            else:
+                logger.warning(
+                    f"工具调用索引 {tool_call_delta.index} 超出缓冲区范围 {len(tool_calls_buffer)}，跳过参数写入。"
+                )
 
     return in_rc_flag
 
@@ -274,6 +280,25 @@ async def _default_stream_response_handler(
             _insure_buffer_closed()
             raise ReqAbortException("请求被外部信号中断")
 
+        # 检查 choices 是否存在
+        if not hasattr(event, "choices"):
+            logger.error(f"[流式响应] event 缺少 choices 属性。event 类型: {type(event)}, event 内容: {event}")
+            raise RespParseException(event, "流式响应解析失败，event 缺少 choices 属性")
+
+        # 处理 choices 为空的情况（通常是只包含 usage 的最终块）
+        if not event.choices or len(event.choices) == 0:
+            # 这是正常情况：流式响应的最后一个块通常只包含 usage 信息，choices 为空
+            logger.debug("[流式响应] 收到空 choices 块（通常是包含 usage 的最终块），跳过处理")
+            # 尝试提取 usage 信息
+            if event.usage:
+                _usage_record = (
+                    getattr(event.usage, "prompt_tokens", 0) or 0,
+                    getattr(event.usage, "completion_tokens", 0) or 0,
+                    getattr(event.usage, "total_tokens", 0) or 0,
+                )
+            continue  # 跳过这个块，继续处理下一个
+
+        logger.debug(f"[流式响应] choices 长度: {len(event.choices)}")
         delta = event.choices[0].delta  # 获取当前块的delta内容
 
         if hasattr(delta, "reasoning_content") and delta.reasoning_content:  # type: ignore
@@ -326,8 +351,16 @@ def _default_normal_response_parser(
     """
     api_response = APIResponse()
 
-    if not hasattr(resp, "choices") or len(resp.choices) == 0:
+    # 调试日志：详细检查响应结构
+    if not hasattr(resp, "choices"):
+        logger.error(f"[非流式响应] resp 缺少 choices 属性。resp 类型: {type(resp)}, resp 内容: {resp}")
         raise RespParseException(resp, "响应解析失败，缺失choices字段")
+
+    if not resp.choices or len(resp.choices) == 0:
+        logger.error(f"[非流式响应] choices 列表为空。resp: {resp}, choices: {resp.choices}")
+        raise RespParseException(resp, "响应解析失败，choices列表为空")
+
+    logger.debug(f"[非流式响应] choices 长度: {len(resp.choices)}")
     message_part = resp.choices[0].message
 
     if hasattr(message_part, "reasoning_content") and message_part.reasoning_content:  # type: ignore
@@ -352,10 +385,10 @@ def _default_normal_response_parser(
         api_response.tool_calls = []
         for call in message_part.tool_calls:
             try:
-                arguments = orjson.loads(repair_json(call.function.arguments)) # type: ignore
+                arguments = orjson.loads(repair_json(call.function.arguments))  # type: ignore
                 if not isinstance(arguments, dict):
                     raise RespParseException(resp, "响应解析失败，工具调用参数无法解析为字典类型")
-                api_response.tool_calls.append(ToolCall(call.id, call.function.name, arguments)) # type: ignore
+                api_response.tool_calls.append(ToolCall(call.id, call.function.name, arguments))  # type: ignore
             except orjson.JSONDecodeError as e:
                 raise RespParseException(resp, "响应解析失败，无法解析工具调用参数") from e
 
@@ -419,8 +452,7 @@ class OpenaiClient(BaseClient):
 
         # 清理其他事件循环的过期缓存
         keys_to_remove = [
-            key for key in self._global_client_cache.keys()
-            if key[0] == self._config_hash and key[1] != current_loop_id
+            key for key in self._global_client_cache.keys() if key[0] == self._config_hash and key[1] != current_loop_id
         ]
         for key in keys_to_remove:
             logger.debug(f"清理过期的 AsyncOpenAI 客户端缓存 (loop_id={key[1]})")
@@ -463,10 +495,7 @@ class OpenaiClient(BaseClient):
         """获取全局缓存统计信息"""
         return {
             "cached_openai_clients": len(cls._global_client_cache),
-            "cache_keys": [
-                {"config_hash": k[0], "loop_id": k[1]}
-                for k in cls._global_client_cache.keys()
-            ],
+            "cache_keys": [{"config_hash": k[0], "loop_id": k[1]} for k in cls._global_client_cache.keys()],
         }
 
     async def get_response(
@@ -590,7 +619,7 @@ class OpenaiClient(BaseClient):
         :param model_info: 模型信息
         :param embedding_input: 嵌入输入文本
         :return: 嵌入响应
-        
+
         - 请求时指定 encoding_format="base64"，避免 OpenAI SDK 自动调用 .tolist()
         - 手动解码 base64 并保持 NumPy 数组格式，减少对象创建
         - 大批量请求后触发垃圾回收
@@ -633,10 +662,7 @@ class OpenaiClient(BaseClient):
                 # item.embedding 现在是 base64 编码的字符串
                 if isinstance(item.embedding, str):
                     # 解码 base64 为 NumPy 数组（float32）
-                    embedding_array = np.frombuffer(
-                        base64.b64decode(item.embedding),
-                        dtype=np.float32
-                    )
+                    embedding_array = np.frombuffer(base64.b64decode(item.embedding), dtype=np.float32)
                     # 保持为 NumPy 数组，不调用 .tolist()
                     embeddings.append(embedding_array)
                 else:
