@@ -120,6 +120,8 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
         "future": True,
         # 🔧 使用 StaticPool 复用单个连接，避免 NullPool 的频繁创建开销
         "poolclass": StaticPool,
+        # 启用健康检查，发现连接损坏时自动重连
+        "pool_pre_ping": True,
         "connect_args": {
             "check_same_thread": False,
             # 增加 timeout，让 SQLite 在遇到锁时等待更长时间

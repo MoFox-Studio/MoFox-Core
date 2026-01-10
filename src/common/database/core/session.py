@@ -139,8 +139,9 @@ async def get_db_session_direct() -> AsyncGenerator[AsyncSession, None]:
             # 检查事务是否活动，避免在已回滚的事务上提交
             if session.is_active:
                 await session.commit()
-        except Exception:
+        except BaseException:
             # 检查是否需要回滚（事务是否活动）
+            # 使用 BaseException 以捕获 asyncio.CancelledError，确保超时取消时也能回滚
             if session.is_active:
                 await session.rollback()
             raise
