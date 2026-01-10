@@ -174,25 +174,50 @@ class MessageStorageBatcher:
         self._prepared_buffer = []
         start_time = time.time()
         total = len(payload)
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            session = None
+            try:
+                async with get_db_session() as session:
+                    for start in range(0, total, self.db_chunk_size):
+                        chunk = payload[start : start + self.db_chunk_size]
+                        if chunk:
+                            await session.execute(insert(Messages), chunk)
+                    # 显式 commit，确保立即释放锁
+                    await session.commit()
 
-        try:
-            async with get_db_session() as session:
-                for start in range(0, total, self.db_chunk_size):
-                    chunk = payload[start : start + self.db_chunk_size]
-                    if chunk:
-                        await session.execute(insert(Messages), chunk)
-                await session.commit()
-
-            elapsed = time.time() - start_time
-            self._last_commit_ts = time.monotonic()
-            per_item = (elapsed / total) * 1000 if total else 0
-            logger.info(
-                f"批量存储了 {total} 条消息 (耗时 {elapsed:.3f} 秒, 平均 {per_item:.2f} ms/条, chunk={self.db_chunk_size})"
-            )
-        except Exception as e:
-            # 回滚到缓冲区, 等待下一次尝试
-            self._prepared_buffer = payload + self._prepared_buffer
-            logger.error(f"批量存储消息失败: {e}")
+                elapsed = time.time() - start_time
+                self._last_commit_ts = time.monotonic()
+                per_item = (elapsed / total) * 1000 if total else 0
+                logger.info(
+                    f"批量存储了 {total} 条消息 (耗时 {elapsed:.3f} 秒, 平均 {per_item:.2f} ms/条, chunk={self.db_chunk_size}, 尝试={attempt+1})"
+                )
+                return  # 成功，退出重试
+                
+            except Exception as e:
+                error_str = str(e)
+                is_lock_error = "database is locked" in error_str or "locked" in error_str.lower()
+                is_rollback_error = "invalid transaction" in error_str or "rolled back" in error_str
+                
+                if (is_lock_error or is_rollback_error) and attempt < max_retries - 1:
+                    wait_time = 0.2 * (attempt + 1)  # 递增等待：0.2s, 0.4s, 0.6s
+                    logger.warning(f"批量存储消息遇到数据库问题，重试 {attempt + 1}/{max_retries}，等待 {wait_time:.2f}s: {error_str[:100]}")
+                    
+                    # 🔧 清理"脏" session
+                    if session is not None:
+                        try:
+                            if session.is_active:
+                                await session.rollback()
+                            await session.close()
+                        except Exception:
+                            pass
+                    
+                    await asyncio.sleep(wait_time)
+                else:
+                    # 最后一次失败，回滚到缓冲区
+                    self._prepared_buffer = payload + self._prepared_buffer
+                    logger.error(f"批量存储消息失败（尝试 {attempt + 1}/{max_retries}）: {e}", exc_info=True)
 
     async def _prepare_message_dict(self, message, chat_stream):
         """准备消息字典数据（用于批量INSERT）
@@ -230,10 +255,10 @@ class MessageStorageBatcher:
             filtered_display_message = _COMPILED_FILTER_PATTERN.sub("", display_message)
 
             # 优化：一次性构建字典，避免多次条件判断
-            user_info = message.user_info or {}
-            chat_info = message.chat_info or {}
-            chat_info_user = chat_info.user_info or {} if chat_info else {}
-            group_info = message.group_info or {}
+            user_info = message.user_info
+            chat_info = message.chat_info
+            chat_info_user = getattr(chat_info, "user_info", None) if chat_info else None
+            group_info = message.group_info
 
             return Messages(
                 message_id=message.message_id,
@@ -241,21 +266,21 @@ class MessageStorageBatcher:
                 chat_id=message.chat_id,
                 reply_to=message.reply_to or "",
                 is_mentioned=message.is_mentioned,
-                chat_info_stream_id=chat_info.stream_id if chat_info else "",
-                chat_info_platform=chat_info.platform if chat_info else "",
-                chat_info_user_platform=chat_info_user.platform if chat_info_user else "",
-                chat_info_user_id=chat_info_user.user_id if chat_info_user else "",
-                chat_info_user_nickname=chat_info_user.user_nickname if chat_info_user else "",
-                chat_info_user_cardname=chat_info_user.user_cardname if chat_info_user else None,
-                chat_info_group_platform=group_info.platform if group_info else None,
-                chat_info_group_id=group_info.group_id if group_info else None,
-                chat_info_group_name=group_info.group_name if group_info else None,
-                chat_info_create_time=chat_info.create_time if chat_info else 0.0,
-                chat_info_last_active_time=chat_info.last_active_time if chat_info else 0.0,
-                user_platform=user_info.platform if user_info else "",
-                user_id=user_info.user_id if user_info else "",
-                user_nickname=user_info.user_nickname if user_info else "",
-                user_cardname=user_info.user_cardname if user_info else None,
+                chat_info_stream_id=getattr(chat_info, "stream_id", "") if chat_info else "",
+                chat_info_platform=getattr(chat_info, "platform", "") if chat_info else "",
+                chat_info_user_platform=getattr(chat_info_user, "platform", "") if chat_info_user else "",
+                chat_info_user_id=getattr(chat_info_user, "user_id", "") if chat_info_user else "",
+                chat_info_user_nickname=getattr(chat_info_user, "user_nickname", "") if chat_info_user else "",
+                chat_info_user_cardname=getattr(chat_info_user, "user_cardname", None) if chat_info_user else None,
+                chat_info_group_platform=getattr(group_info, "platform", None) if group_info else None,
+                chat_info_group_id=getattr(group_info, "group_id", None) if group_info else None,
+                chat_info_group_name=getattr(group_info, "group_name", None) if group_info else None,
+                chat_info_create_time=getattr(chat_info, "create_time", 0.0) if chat_info else 0.0,
+                chat_info_last_active_time=getattr(chat_info, "last_active_time", 0.0) if chat_info else 0.0,
+                user_platform=getattr(user_info, "platform", "") if user_info else "",
+                user_id=getattr(user_info, "user_id", "") if user_info else "",
+                user_nickname=getattr(user_info, "user_nickname", "") if user_info else "",
+                user_cardname=getattr(user_info, "user_cardname", None) if user_info else None,
                 processed_plain_text=filtered_processed_plain_text,
                 display_message=filtered_display_message,
                 memorized_times=getattr(message, "memorized_times", 0),

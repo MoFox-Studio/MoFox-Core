@@ -5,6 +5,7 @@
 - 优先级队列：支持紧急操作优先执行
 - 性能监控：详细的执行统计和分析
 - 智能合并：更高效的操作合并策略
+- 自动重试：处理数据库锁和事务错误
 """
 
 import asyncio
@@ -16,12 +17,54 @@ from enum import IntEnum
 from typing import Any
 
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.common.database.core.session import get_db_session_direct
 from src.common.logger import get_logger
 from src.common.memory_utils import estimate_size_smart
 
 logger = get_logger("batch_scheduler")
+
+
+async def _execute_with_retry(
+    operation_func: Callable,
+    max_retries: int = 3,
+    retry_delay: float = 0.1,
+    operation_name: str = "数据库操作",
+) -> Any:
+    """带重试的数据库操作执行器
+    
+    Args:
+        operation_func: 要执行的操作函数（async，返回结果）
+        max_retries: 最大重试次数
+        retry_delay: 基础重试延迟（秒）
+        operation_name: 操作名称（用于日志）
+    
+    Returns:
+        操作结果
+    """
+    for attempt in range(max_retries):
+        try:
+            return await operation_func()
+        except Exception as e:
+            error_str = str(e)
+            is_retryable = (
+                "database is locked" in error_str 
+                or "locked" in error_str.lower()
+                or "invalid transaction" in error_str
+                or "rolled back" in error_str
+            )
+            
+            if is_retryable and attempt < max_retries - 1:
+                wait_time = retry_delay * (attempt + 1)
+                logger.warning(
+                    f"{operation_name}遇到可重试错误，重试 {attempt + 1}/{max_retries}，"
+                    f"等待 {wait_time:.2f}s: {error_str[:100]}"
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"{operation_name}失败（尝试 {attempt + 1}/{max_retries}）: {e}")
+                raise
 
 
 class Priority(IntEnum):
