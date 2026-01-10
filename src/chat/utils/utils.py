@@ -216,56 +216,59 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
         return [text]
 
     # --- 3. 全局最小代价合并 ---
-    def get_merge_info(segment: str, total_len: int) -> tuple[float, float]:
+    def get_merge_info(segment: str) -> tuple[float, float]:
         """返回 (阻力系数, 合并概率)
-        阻力系数：用于全局排序，越大越不容易合并。
-        合并概率：用于随机决策，越小越倾向于断开。
+        阻力系数：决定合并的先后顺序（句号阻力大，逗号阻力小）。
+        合并概率：决定是否执行合并（句子越长，概率越低）。
         """
         s = segment.strip()
         if not s: return 1.0, 1.0
         
-        # 基础合并概率：全文越长，合并概率越低（倾向于多发几条）
-        base_prob = max(0.2, min(0.8, 1.0 - (total_len / 500)))
+        curr_len = len(s)
+        # 基础合并概率：从 0.95 开始，随长度线性衰减。
+        # 约 120 字时降至最低 0.05。这种衰减很自然，不会有“硬墙”感。
+        base_prob = max(0.05, 0.95 - (curr_len / 130))
         
-        # 换行符：绝对的分割点，阻力最高，合并概率最低
+        # 阻力系数：仅由标点类型决定，保持全局排序的稳定性
+        # 换行符：阻力极大
         if any(c in s for c in "\n\r\t"):
             return 50.0, 0.01
             
-        # 强标点（句号、分号）：用户认为“不好看”，优先作为分割点（即不合并）
+        # 强标点（句号、分号）：阻力大，且合并概率额外降低
         if s.endswith(("。", "；", ";")):
-            return 20.0, base_prob * 0.1  # 极高阻力，极低合并率
-            
-        # 情感标点（问号、感叹号）：虽然也是强断句，但比句号更有保留价值
-        if s.endswith(("！", "!", "？", "?")):
             return 15.0, base_prob * 0.2
             
-        # 弱标点（逗号、波浪号、♪）：合并后观感好，阻力小，合并率高
+        # 情感标点（问号、感叹号）：阻力较大
+        if s.endswith(("！", "!", "？", "?")):
+            return 10.0, base_prob * 0.3
+            
+        # 弱标点（逗号、波浪号、♪）：阻力小，合并概率高
         if s.endswith(("，", ",", "~", "～", "♪", "…")):
-            return 2.0, base_prob * 0.8
+            return 2.0, base_prob * 0.85
             
         # 无标点或空格：最优先合并
-        return 1.1, 0.95
+        return 1.1, 0.98
 
     # 尝试进行概率合并
-    # 我们进行多轮尝试，直到无法再合并或达到上限
     changed = True
     while changed and len(segments) > 1:
         changed = False
-        # 计算所有缝隙的合并代价
         gap_scores = []
         for i in range(len(segments) - 1):
-            res, prob = get_merge_info(segments[i], len(text))
-            # 长度修正：如果当前片段太短，强制提升合并概率
-            if len(segments[i].strip()) < 8: prob = max(prob, 0.9)
+            res, prob = get_merge_info(segments[i])
+            # 极短片段强制提升合并意愿
+            if len(segments[i].strip()) < 6: prob = max(prob, 0.95)
             
+            # 代价 = 长度和 * 阻力
             score = (len(segments[i]) + len(segments[i+1])) * res
             gap_scores.append({'idx': i, 'score': score, 'prob': prob})
         
-        # 按代价从小到大排序，优先尝试合并代价小的
+        # 全局排序：优先处理代价最小的缝隙
         gap_scores.sort(key=lambda x: x['score'])
         
         for gap in gap_scores:
-            # 如果条数已经没超限，且随机合并没通过，则保留这个断句
+            # 核心逻辑：如果条数没超限，就看“缘分”（概率）
+            # 句子越长，prob越低，random.random() > prob 就越容易成立，从而断开
             if len(segments) <= max_sentence_num and random.random() > gap['prob']:
                 continue
             
@@ -274,14 +277,14 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
             segments[idx] += segments[idx+1]
             del segments[idx+1]
             changed = True
-            break # 每次合并后重新计算全局代价，保证最优性
+            break
 
-    # 硬上限兜底：如果随机合并后依然超限，强制按代价合并
+    # 硬上限兜底：只有在随机合并完依然超限时，才强制按代价合并
     while len(segments) > max_sentence_num:
         min_score = float('inf')
         merge_idx = -1
         for i in range(len(segments) - 1):
-            res, _ = get_merge_info(segments[i], len(text))
+            res, _ = get_merge_info(segments[i])
             score = (len(segments[i]) + len(segments[i+1])) * res
             if score < min_score:
                 min_score = score
