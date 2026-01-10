@@ -178,10 +178,11 @@ async def get_recent_group_speaker(chat_stream_id: str, sender, limit: int = 12)
 
 
 def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
-    """智能文本分割算法 (修正版)
+    """智能文本分割算法 (灵动版)
     1. 句子内部标点完全保留。
-    2. 仅在最终分割点移除逗号/句号。
-    3. 采用“带权重的最短相邻合并”，优先保留句号完整性。
+    2. 引入基于长度和标点类型的随机合并概率，保留长文本能力。
+    3. 仅在最终分割点移除冗余标点。
+    4. 确保最终条数不超过上限，但不强行分满。
     """
     if not text:
         return []
@@ -198,46 +199,77 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
         text = text.replace(pair, f"__PAIR_PROTECT_{idx}__")
 
     # --- 2. 初始切分 ---
-    # 匹配所有标点作为潜在分割点，并捕获标点
-    # 包含：。，,！!？?；; \n ~ ～ ♪ …
+    # 匹配所有标点作为潜在分割点
     punct_pattern = r'([。，,！!？?；;\n\r\t\s~～♪…]+)'
     raw_parts = re.split(punct_pattern, text)
     
-    # 组合成 (内容 + 标点) 的片段
-    segments = []
+    initial_segments = []
     for i in range(0, len(raw_parts) - 1, 2):
         content = raw_parts[i]
         punct = raw_parts[i+1]
         if content or punct:
-            segments.append(content + punct)
+            initial_segments.append(content + punct)
     if len(raw_parts) % 2 != 0 and raw_parts[-1]:
-        segments.append(raw_parts[-1])
+        initial_segments.append(raw_parts[-1])
 
-    if not segments:
+    if not initial_segments:
         return [text]
 
-    # --- 3. 带权重的最短相邻合并 ---
-    # 阻力系数：阻力越大，越不容易被合并（即越倾向于在这里断开）
-    def get_merge_resistance(segment: str) -> float:
+    # --- 3. 启发式随机合并 ---
+    # 目标：在上限之内，根据概率决定是否断开
+    def get_merge_probability(segment: str, total_len: int) -> float:
         s = segment.strip()
-        if not s: return 0.1
+        if not s: return 1.0
+        
+        # 基础概率：全文越长，越倾向于断开（合并概率越低）
+        # 长度 < 20: 0.9, 长度 > 100: 0.3
+        base_prob = max(0.3, min(0.9, 1.0 - (total_len / 200)))
+        
+        # 标点修正
         if s.endswith(("。", "！", "!", "？", "?", "；", ";", "\n")):
-            return 5.0  # 强断句，阻力大
+            return base_prob * 0.2  # 强断句，极少合并
         if s.endswith(("，", ",", "~", "～", "♪", "…")):
-            return 1.5  # 弱断句，阻力中
-        return 0.5      # 无标点或空格，阻力小
+            return base_prob * 0.7  # 弱断句，有一定概率合并
+        return 0.95  # 无标点或空格，几乎总是合并
 
+    segments = []
+    if initial_segments:
+        current_buffer = initial_segments[0]
+        total_text_len = len(text)
+        
+        for i in range(1, len(initial_segments)):
+            next_seg = initial_segments[i]
+            # 决定是否合并
+            prob = get_merge_probability(current_buffer, total_text_len)
+            
+            # 长度修正：如果当前缓冲区太短（< 8字），强制提升合并概率
+            if len(current_buffer.strip()) < 8:
+                prob = max(prob, 0.9)
+
+            if random.random() < prob:
+                current_buffer += next_seg
+            else:
+                segments.append(current_buffer)
+                current_buffer = next_seg
+        segments.append(current_buffer)
+
+    # --- 4. 硬上限兜底 (仅在超限时触发) ---
     while len(segments) > max_sentence_num:
         min_score = float('inf')
         merge_idx = -1
         
         for i in range(len(segments) - 1):
-            # 评分公式：(长度和) * (左侧片段的合并阻力)
-            # 阻力越大，评分越高，越不容易被选中合并
+            # 寻找最值得合并的相邻对
             combined_len = len(segments[i]) + len(segments[i+1])
-            resistance = get_merge_resistance(segments[i])
-            score = combined_len * resistance
+            # 阻力系数
+            s = segments[i].strip()
+            resistance = 1.0
+            if s.endswith(("。", "！", "!", "？", "?", "；", ";", "\n")):
+                resistance = 5.0
+            elif s.endswith(("，", ",", "~", "～", "♪", "…")):
+                resistance = 1.5
             
+            score = combined_len * resistance
             if score < min_score:
                 min_score = score
                 merge_idx = i
@@ -248,17 +280,16 @@ def smart_split_text(text: str, max_sentence_num: int) -> list[str]:
         else:
             break
 
-    # --- 4. 恢复保护内容与分割点清理 ---
+    # --- 5. 恢复保护内容与分割点清理 ---
     def final_clean(s: str, is_last: bool) -> str:
-        # 恢复保护内容
         for idx, url in enumerate(urls):
             s = s.replace(f"__URL_PROTECT_{idx}__", url)
         for idx, pair in enumerate(pairs):
             s = s.replace(f"__PAIR_PROTECT_{idx}__", pair)
         
         s = s.strip()
-        # 只有在非最后一句的末尾，才移除逗号/句号/换行符
         if not is_last:
+            # 仅在分割点移除冗余标点
             s = re.sub(r'[，,。；;\n\r\t]+$', '', s)
         return s
 
