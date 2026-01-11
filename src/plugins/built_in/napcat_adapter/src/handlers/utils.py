@@ -7,8 +7,8 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 import orjson
-import urllib3
 from PIL import Image
 
 from src.common.logger import get_logger
@@ -129,13 +129,6 @@ async def _call_adapter_api(
 _load_cache_from_disk()
 
 
-class SSLAdapter(urllib3.PoolManager):
-    def __init__(self, *args, **kwargs):
-        context = ssl.create_default_context()
-        context.set_ciphers("DEFAULT@SECLEVEL=1")
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        kwargs["ssl_context"] = context
-        super().__init__(*args, **kwargs)
 
 
 async def get_respose(
@@ -241,13 +234,13 @@ async def get_image_base64(url: str) -> str:
     # sourcery skip: raise-specific-error
     """下载图片/视频并返回Base64"""
     logger.debug(f"下载图片: {url}")
-    http = SSLAdapter()
     try:
-        response = http.request("GET", url, timeout=10)
-        if response.status != 200:
-            raise Exception(f"HTTP Error: {response.status}")
-        image_bytes = response.data
-        return base64.b64encode(image_bytes).decode("utf-8")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status != 200:
+                    raise Exception(f"HTTP Error: {response.status}")
+                image_bytes = await response.read()
+                return base64.b64encode(image_bytes).decode("utf-8")
     except Exception as e:
         logger.error(f"图片下载失败: {e!s}")
         raise
@@ -327,9 +320,13 @@ async def get_stranger_info(
         if cached is not None:
             return cached
 
-    response = await _call_adapter_api(
-        "get_stranger_info", {"user_id": user_id}, adapter=adapter
-    )
+    try:
+        response = await _call_adapter_api(
+            "get_stranger_info", {"user_id": user_id}, adapter=adapter, timeout=10.0
+        )
+    except Exception as e:
+        logger.warning(f"获取陌生人信息超时或失败: {e}")
+        return None
     data = response.get("data") if response else None
     if data is not None and use_cache:
         await _set_cached("stranger_info", cache_key, data)
@@ -375,7 +372,7 @@ async def get_record_detail(
 
 async def get_forward_message(
     raw_message: dict, *, adapter: "NapcatAdapter | None" = None
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]] | None:
     forward_message_data: dict = raw_message.get("data", {})
     if not forward_message_data:
         logger.warning("转发消息内容为空")
@@ -391,19 +388,19 @@ async def get_forward_message(
         )
         if response is None:
             logger.error("获取转发消息失败，返回值为空")
-            return None
-    except TimeoutError:
+            return [{"sender": {"nickname": "系统"}, "message": [{"type": "text", "data": "[获取转发消息失败]"}]}]
+    except (asyncio.TimeoutError, TimeoutError):
         logger.error("获取转发消息超时")
-        return None
+        return [{"sender": {"nickname": "系统"}, "message": [{"type": "text", "data": "[获取转发消息超时]"}]}]
     except Exception as e:
         logger.error(f"获取转发消息失败: {e!s}")
-        return None
+        return [{"sender": {"nickname": "系统"}, "message": [{"type": "text", "data": f"[获取转发消息失败: {e!s}]"}]}]
     logger.debug(
         f"转发消息原始格式：{orjson.dumps(response).decode('utf-8')[:80]}..."
         if len(orjson.dumps(response).decode("utf-8")) > 80
         else orjson.dumps(response).decode("utf-8")
     )
-    response_data: dict = response.get("data")
+    response_data: dict = (response.get("data") if response else {}) or {}
     if not response_data:
         logger.warning("转发消息内容为空或获取失败")
         return None
