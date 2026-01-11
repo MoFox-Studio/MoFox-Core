@@ -1,0 +1,761 @@
+"""
+TaskManager 任务管理器 (向后兼容层)
+
+此模块保持向后兼容性。所有实现已经重构到 task_manager 包中。
+
+负责管理和调度异步任务，提供：
+- 任务创建与执行
+- 任务优先级管理
+- 任务依赖关系处理
+- 任务队列管理
+- 任务重试机制
+- 与 Watchdog 集成的任务监控
+- 并发控制
+"""
+
+# 从新的模块结构中导入所有内容
+from .task_manager import (
+    TaskManager,
+    TaskConfig,
+    TaskPriority,
+    TaskState,
+    ManagedTask,
+    get_task_manager,
+    _task_manager_instance,
+)
+
+
+class TaskPriority(Enum):
+    """任务优先级"""
+    LOW = 0
+    NORMAL = 1
+    HIGH = 2
+    CRITICAL = 3
+
+
+class TaskState(Enum):
+    """任务状态"""
+    QUEUED = "queued"  # 已排队
+    WAITING = "waiting"  # 等待依赖
+    RUNNING = "running"  # 运行中
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 失败
+    CANCELLED = "cancelled"  # 已取消
+    RETRYING = "retrying"  # 重试中
+
+
+@dataclass
+class TaskConfig:
+    """任务配置"""
+    priority: TaskPriority = TaskPriority.NORMAL
+    timeout: Optional[float] = None  # 超时时间（秒）
+    max_retries: int = 0  # 最大重试次数
+    retry_delay: float = 1.0  # 重试延迟（秒）
+    dependencies: List[str] = field(default_factory=list)  # 依赖的任务ID列表
+    metadata: Dict[str, Any] = field(default_factory=dict)  # 任务元数据
+    cancel_on_dependency_failure: bool = True  # 依赖失败时是否取消
+    enable_watchdog: bool = True  # 是否启用 Watchdog 监控
+
+
+@dataclass
+class ManagedTask:
+    """被管理的任务"""
+    task_id: str
+    name: str
+    coro: Callable[..., Coroutine]  # 协程工厂函数
+    args: tuple = field(default_factory=tuple)
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    config: TaskConfig = field(default_factory=TaskConfig)
+    
+    # 运行时信息
+    state: TaskState = TaskState.QUEUED
+    task: Optional[asyncio.Task] = None
+    watchdog_id: Optional[str] = None
+    result: Any = None
+    error: Optional[BaseException] = None
+    retry_count: int = 0
+    create_time: float = field(default_factory=time.time)
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    
+    # 依赖关系
+    dependents: Set[str] = field(default_factory=set)  # 依赖于本任务的任务ID
+    
+    @property
+    def duration(self) -> Optional[float]:
+        """任务运行时长"""
+        if self.start_time is None:
+            return None
+        end = self.end_time or time.time()
+        return end - self.start_time
+    
+    @property
+    def is_terminal_state(self) -> bool:
+        """是否处于终态"""
+        return self.state in (
+            TaskState.COMPLETED,
+            TaskState.FAILED,
+            TaskState.CANCELLED
+        )
+    
+    @property
+    def can_retry(self) -> bool:
+        """是否可以重试"""
+        return self.retry_count < self.config.max_retries
+
+
+class TaskManager:
+    """
+    任务管理器
+    
+    功能：
+    1. 任务注册与调度
+    2. 优先级队列管理
+    3. 依赖关系处理
+    4. 并发控制
+    5. 重试机制
+    6. 与 Watchdog 集成
+    7. 任务生命周期管理
+    """
+    
+    def __init__(
+        self,
+        max_concurrent_tasks: int = 10,
+        enable_watchdog: bool = True,
+        watchdog_check_interval: float = 1.0
+    ):
+        """
+        初始化任务管理器
+        
+        Args:
+            max_concurrent_tasks: 最大并发任务数
+            enable_watchdog: 是否启用 Watchdog 监控
+            watchdog_check_interval: Watchdog 检查间隔
+        """
+        self._tasks: Dict[str, ManagedTask] = {}
+        self._task_counter = 0
+        self._running = False
+        
+        # 配置
+        self.max_concurrent_tasks = max_concurrent_tasks
+        self.enable_watchdog = enable_watchdog
+        self.watchdog_check_interval = watchdog_check_interval
+        
+        # 优先级队列（使用 dict 按优先级分组）
+        self._priority_queues: Dict[TaskPriority, asyncio.Queue] = {
+            priority: asyncio.Queue() for priority in TaskPriority
+        }
+        
+        # 调度器任务
+        self._scheduler_task: Optional[asyncio.Task] = None
+        self._semaphore: Optional[asyncio.Semaphore] = None
+        
+        # 统计数据
+        self._stats = defaultdict(int)
+        
+        # 回调函数
+        self._on_task_complete_callbacks: List[Callable] = []
+        self._on_task_failed_callbacks: List[Callable] = []
+        
+        # Watchdog 实例
+        self._watchdog = get_watchdog() if enable_watchdog else None
+        
+        # 配置项
+        self.auto_cancel_on_timeout = True  # 超时时是否自动取消任务
+        
+        # 如果启用 Watchdog，注册相应的回调
+        if self._watchdog:
+            self._watchdog.add_timeout_callback(self._on_watchdog_timeout)
+            self._watchdog.add_error_callback(self._on_watchdog_error)
+    
+    async def start(self):
+        """启动任务管理器"""
+        if self._running:
+            logger.warning("TaskManager 已在运行")
+            return
+        
+        self._running = True
+        self._semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
+        
+        # 启动 Watchdog
+        if self._watchdog:
+            self._watchdog.check_interval = self.watchdog_check_interval
+            await self._watchdog.start()
+        
+        # 启动调度器
+        self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        
+        logger.info(
+            f"TaskManager 已启动，最大并发数: {self.max_concurrent_tasks}, "
+            f"Watchdog: {'启用' if self.enable_watchdog else '禁用'}"
+        )
+    
+    async def stop(self, cancel_running_tasks: bool = False):
+        """
+        停止任务管理器
+        
+        Args:
+            cancel_running_tasks: 是否取消正在运行的任务
+        """
+        if not self._running:
+            return
+        
+        self._running = False
+        
+        # 取消调度器
+        if self._scheduler_task:
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except asyncio.CancelledError:
+                pass
+        
+        # 处理正在运行的任务
+        if cancel_running_tasks:
+            await self._cancel_all_running_tasks()
+        else:
+            await self._wait_for_running_tasks()
+        
+        # 停止 Watchdog
+        if self._watchdog:
+            await self._watchdog.stop()
+        
+        logger.info("TaskManager 已停止")
+    
+    def submit_task(
+        self,
+        coro: Callable[..., Coroutine],
+        *args,
+        name: Optional[str] = None,
+        config: Optional[TaskConfig] = None,
+        **kwargs
+    ) -> str:
+        """
+        提交任务
+        
+        Args:
+            coro: 协程函数
+            *args: 位置参数
+            name: 任务名称
+            config: 任务配置
+            **kwargs: 关键字参数
+        
+        Returns:
+            任务ID
+        """
+        if not self._running:
+            raise RuntimeError("TaskManager 未运行，请先调用 start()")
+        
+        # 生成任务ID
+        self._task_counter += 1
+        task_id = f"task_{self._task_counter}_{int(time.time() * 1000)}"
+        
+        # 创建任务配置
+        task_config = config or TaskConfig()
+        
+        # 创建被管理任务
+        managed_task = ManagedTask(
+            task_id=task_id,
+            name=name or f"Task-{self._task_counter}",
+            coro=coro,
+            args=args,
+            kwargs=kwargs,
+            config=task_config
+        )
+        
+        self._tasks[task_id] = managed_task
+        self._stats['total_submitted'] += 1
+        
+        # 检查依赖关系
+        if task_config.dependencies:
+            if self._check_dependencies(task_id):
+                managed_task.state = TaskState.QUEUED
+                self._enqueue_task(managed_task)
+            else:
+                managed_task.state = TaskState.WAITING
+        else:
+            managed_task.state = TaskState.QUEUED
+            self._enqueue_task(managed_task)
+        
+        logger.debug(f"任务已提交: {managed_task.name} (ID: {task_id})")
+        return task_id
+    
+    def _enqueue_task(self, managed_task: ManagedTask):
+        """将任务加入优先级队列"""
+        priority = managed_task.config.priority
+        try:
+            self._priority_queues[priority].put_nowait(managed_task.task_id)
+        except asyncio.QueueFull:
+            logger.warning(f"优先级队列已满: {priority}")
+    
+    def _check_dependencies(self, task_id: str) -> bool:
+        """
+        检查任务的依赖是否满足
+        
+        Returns:
+            True 如果所有依赖都已完成，False 否则
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return False
+        
+        for dep_id in task.config.dependencies:
+            dep_task = self._tasks.get(dep_id)
+            if not dep_task:
+                logger.warning(f"依赖任务不存在: {dep_id}")
+                return False
+            
+            # 记录依赖关系
+            dep_task.dependents.add(task_id)
+            
+            # 检查依赖状态
+            if dep_task.state != TaskState.COMPLETED:
+                if dep_task.state == TaskState.FAILED:
+                    if task.config.cancel_on_dependency_failure:
+                        task.state = TaskState.CANCELLED
+                        task.error = Exception(f"依赖任务失败: {dep_id}")
+                        self._stats['total_cancelled'] += 1
+                return False
+        
+        return True
+    
+    async def _scheduler_loop(self):
+        """调度器循环"""
+        while self._running:
+            try:
+                # 按优先级从高到低处理任务
+                for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+                    queue = self._priority_queues[priority]
+                    
+                    if not queue.empty():
+                        try:
+                            task_id = await asyncio.wait_for(
+                                queue.get(),
+                                timeout=0.1
+                            )
+                            await self._execute_task(task_id)
+                        except asyncio.TimeoutError:
+                            continue
+                
+                # 检查等待中的任务
+                await self._check_waiting_tasks()
+                
+                # 短暂休眠，避免忙等待
+                await asyncio.sleep(0.1)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"调度器异常: {e}", exc_info=True)
+    
+    async def _execute_task(self, task_id: str):
+        """执行任务"""
+        managed_task = self._tasks.get(task_id)
+        if not managed_task:
+            return
+        
+        # 获取信号量（控制并发）
+        if not self._semaphore:
+            logger.error("信号量未初始化，无法执行任务")
+            return
+        
+        await self._semaphore.acquire()
+        
+        try:
+            managed_task.state = TaskState.RUNNING
+            managed_task.start_time = time.time()
+            self._stats['total_running'] += 1
+            
+            # 创建协程
+            coro = managed_task.coro(*managed_task.args, **managed_task.kwargs)
+            
+            # 创建任务
+            task = asyncio.create_task(coro)
+            managed_task.task = task
+            
+            # 注册到 Watchdog
+            if self._watchdog and managed_task.config.enable_watchdog:
+                watchdog_id = self._watchdog.register_task(
+                    task,
+                    name=managed_task.name,
+                    timeout=managed_task.config.timeout,
+                    metadata=managed_task.config.metadata
+                )
+                managed_task.watchdog_id = watchdog_id
+            
+            # 等待任务完成
+            try:
+                result = await task
+                await self._on_task_success(managed_task, result)
+            except asyncio.CancelledError:
+                await self._on_task_cancelled(managed_task)
+            except Exception as e:
+                await self._on_task_error(managed_task, e)
+            
+        finally:
+            if self._semaphore:
+                self._semaphore.release()
+            self._stats['total_running'] -= 1
+    
+    def _on_watchdog_timeout(self, watchdog_id: str, task_info: Any):
+        """
+        Watchdog 超时回调
+        
+        将 Watchdog 检测到的超时事件转发给对应的 TaskManager 任务，
+        可配置是否自动取消超时任务
+        """
+        # 通过 watchdog_id 查找对应的 ManagedTask
+        for task_id, managed_task in self._tasks.items():
+            if managed_task.watchdog_id == watchdog_id:
+                logger.warning(
+                    f"[Watchdog] 检测到任务超时: {managed_task.name} "
+                    f"(ID: {task_id}), 超时时间: {task_info.timeout}s, "
+                    f"实际运行时长: {task_info.duration:.2f}s"
+                )
+                
+                # 如果启用了自动取消超时任务，则取消该任务
+                if self.auto_cancel_on_timeout and managed_task.task and not managed_task.task.done():
+                    logger.info(f"[TaskManager] 自动取消超时任务: {managed_task.name}")
+                    managed_task.task.cancel("Task timeout in watchdog")
+                    self._stats['total_timeout_cancelled'] += 1
+                
+                break
+    
+    def _on_watchdog_error(self, watchdog_id: str, task_info: Any):
+        """
+        Watchdog 错误回调
+        
+        仅用于记录 Watchdog 检测到的任务错误。
+        实际的错误处理在 _on_task_error 中完成。
+        """
+        # 通过 watchdog_id 查找对应的 ManagedTask
+        for task_id, managed_task in self._tasks.items():
+            if managed_task.watchdog_id == watchdog_id:
+                logger.error(
+                    f"[Watchdog] 检测到任务错误: {managed_task.name} "
+                    f"(ID: {task_id}), 错误类型: {type(task_info.error).__name__}, "
+                    f"错误信息: {task_info.error}"
+                )
+                break
+    
+    async def _on_task_success(self, managed_task: ManagedTask, result: Any):
+        """任务成功完成"""
+        managed_task.state = TaskState.COMPLETED
+        managed_task.result = result
+        managed_task.end_time = time.time()
+        self._stats['total_completed'] += 1
+        
+        logger.debug(
+            f"任务完成: {managed_task.name} (ID: {managed_task.task_id}), "
+            f"耗时: {managed_task.duration:.2f}s"
+        )
+        
+        # 触发回调
+        for callback in self._on_task_complete_callbacks:
+            try:
+                await self._safe_callback(callback, managed_task)
+            except Exception as e:
+                logger.error(f"完成回调执行失败: {e}")
+        
+        # 从 Watchdog 中注销任务
+        await self._unregister_from_watchdog(managed_task)
+        
+        # 处理依赖此任务的任务
+        await self._notify_dependents(managed_task.task_id)
+    
+    async def _on_task_error(self, managed_task: ManagedTask, error: Exception):
+        """任务执行失败"""
+        managed_task.error = error
+        managed_task.end_time = time.time()
+        
+        # 检查是否可以重试
+        if managed_task.can_retry:
+            managed_task.retry_count += 1
+            managed_task.state = TaskState.RETRYING
+            self._stats['total_retries'] += 1
+            
+            logger.warning(
+                f"任务失败，准备重试 ({managed_task.retry_count}/{managed_task.config.max_retries}): "
+                f"{managed_task.name}, 错误: {error}"
+            )
+            
+            # 延迟后重新加入队列
+            await asyncio.sleep(managed_task.config.retry_delay)
+            managed_task.state = TaskState.QUEUED
+            managed_task.task = None
+            managed_task.start_time = None
+            managed_task.end_time = None
+            managed_task.error = None
+            self._enqueue_task(managed_task)
+            return
+        else:
+            managed_task.state = TaskState.FAILED
+            self._stats['total_failed'] += 1
+            
+            logger.error(
+                f"任务失败: {managed_task.name} (ID: {managed_task.task_id}), "
+                f"错误: {error}"
+            )
+            
+            # 触发回调
+            for callback in self._on_task_failed_callbacks:
+                try:
+                    await self._safe_callback(callback, managed_task)
+                except Exception as e:
+                    logger.error(f"失败回调执行失败: {e}")
+            
+            # 从 Watchdog 中注销任务
+            await self._unregister_from_watchdog(managed_task)
+            
+            # 处理依赖此任务的任务
+            await self._notify_dependents(managed_task.task_id)
+    
+    async def _on_task_cancelled(self, managed_task: ManagedTask):
+        """任务被取消"""
+        managed_task.state = TaskState.CANCELLED
+        managed_task.end_time = time.time()
+        self._stats['total_cancelled'] += 1
+        
+        # 从 Watchdog 中注销任务
+        await self._unregister_from_watchdog(managed_task)
+        logger.info(f"任务已取消: {managed_task.name} (ID: {managed_task.task_id})")
+        
+        # 处理依赖此任务的任务
+        await self._notify_dependents(managed_task.task_id)
+    
+    async def _notify_dependents(self, task_id: str):
+        """通知依赖任务"""
+        task = self._tasks.get(task_id)
+        if not task:
+            return
+        
+        for dependent_id in task.dependents:
+            dependent = self._tasks.get(dependent_id)
+            if not dependent or dependent.state != TaskState.WAITING:
+                continue
+            
+            # 检查依赖是否满足
+            if self._check_dependencies(dependent_id):
+                dependent.state = TaskState.QUEUED
+                self._enqueue_task(dependent)
+    
+    async def _check_waiting_tasks(self):
+        """检查等待中的任务"""
+        for task_id, task in list(self._tasks.items()):
+            if task.state == TaskState.WAITING:
+                if self._check_dependencies(task_id):
+                    task.state = TaskState.QUEUED
+                    self._enqueue_task(task)
+    
+    async def _safe_callback(self, callback: Callable, managed_task: ManagedTask):
+        """安全执行回调"""
+        if asyncio.iscoroutinefunction(callback):
+            await callback(managed_task)
+        else:
+            callback(managed_task)
+    
+    async def _unregister_from_watchdog(self, managed_task: ManagedTask):
+        """
+        从 Watchdog 中注销任务
+        
+        防止任务完成后仍然被 Watchdog 追踪，导致内存泄漏
+        """
+        if self._watchdog and managed_task.watchdog_id:
+            try:
+                self._watchdog.unregister_task(managed_task.watchdog_id)
+                logger.debug(
+                    f"任务已从 Watchdog 中注销: {managed_task.name} "
+                    f"(watchdog_id: {managed_task.watchdog_id})"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"从 Watchdog 注销任务失败: {managed_task.name}, "
+                    f"错误: {e}"
+                )
+    
+    async def cancel_task(self, task_id: str) -> bool:
+        """
+        取消任务
+        
+        Args:
+            task_id: 任务ID
+        
+        Returns:
+            是否成功取消
+        """
+        managed_task = self._tasks.get(task_id)
+        if not managed_task:
+            return False
+        
+        if managed_task.state == TaskState.RUNNING and managed_task.task:
+            managed_task.task.cancel()
+            return True
+        elif managed_task.state in (TaskState.QUEUED, TaskState.WAITING):
+            managed_task.state = TaskState.CANCELLED
+            self._stats['total_cancelled'] += 1
+            return True
+        
+        return False
+    
+    async def wait_for_task(
+        self,
+        task_id: str,
+        timeout: Optional[float] = None
+    ) -> Any:
+        """
+        等待任务完成
+        
+        Args:
+            task_id: 任务ID
+            timeout: 超时时间
+        
+        Returns:
+            任务结果
+        
+        Raises:
+            asyncio.TimeoutError: 超时
+            Exception: 任务执行失败
+        """
+        managed_task = self._tasks.get(task_id)
+        if not managed_task:
+            raise ValueError(f"任务不存在: {task_id}")
+        
+        # 等待任务完成（包括重试）
+        start_time = time.time()
+        while not managed_task.is_terminal_state:
+            if timeout and (time.time() - start_time) > timeout:
+                raise asyncio.TimeoutError()
+            await asyncio.sleep(0.1)
+        
+        # 返回最终结果
+        if managed_task.state == TaskState.COMPLETED:
+            return managed_task.result
+        elif managed_task.state == TaskState.FAILED:
+            if managed_task.error:
+                raise managed_task.error
+            else:
+                raise RuntimeError("Task failed with unknown error")
+        else:
+            raise asyncio.CancelledError()
+    
+    async def _cancel_all_running_tasks(self):
+        """取消所有运行中的任务"""
+        for task_id, managed_task in list(self._tasks.items()):
+            if managed_task.state == TaskState.RUNNING:
+                await self.cancel_task(task_id)
+    
+    async def _wait_for_running_tasks(self, timeout: float = 30.0):
+        """等待所有运行中的任务完成"""
+        start_time = time.time()
+        while True:
+            running_tasks = [
+                t for t in self._tasks.values()
+                if t.state == TaskState.RUNNING
+            ]
+            if not running_tasks:
+                break
+            
+            if time.time() - start_time > timeout:
+                logger.warning("等待任务完成超时，将取消剩余任务")
+                await self._cancel_all_running_tasks()
+                break
+            
+            await asyncio.sleep(0.5)
+    
+    def get_task_info(self, task_id: str) -> Optional[ManagedTask]:
+        """获取任务信息"""
+        return self._tasks.get(task_id)
+    
+    def get_all_tasks(self) -> Dict[str, ManagedTask]:
+        """获取所有任务"""
+        return self._tasks.copy()
+    
+    def get_tasks_by_state(self, state: TaskState) -> Dict[str, ManagedTask]:
+        """按状态获取任务"""
+        return {
+            tid: task for tid, task in self._tasks.items()
+            if task.state == state
+        }
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        running_count = len(self.get_tasks_by_state(TaskState.RUNNING))
+        queued_count = len(self.get_tasks_by_state(TaskState.QUEUED))
+        waiting_count = len(self.get_tasks_by_state(TaskState.WAITING))
+        
+        return {
+            'total_submitted': self._stats['total_submitted'],
+            'total_completed': self._stats['total_completed'],
+            'total_failed': self._stats['total_failed'],
+            'total_cancelled': self._stats['total_cancelled'],
+            'total_retries': self._stats['total_retries'],
+            'current_running': running_count,
+            'current_queued': queued_count,
+            'current_waiting': waiting_count,
+            'max_concurrent': self.max_concurrent_tasks
+        }
+    
+    def add_complete_callback(self, callback: Callable[[ManagedTask], None]):
+        """添加任务完成回调"""
+        self._on_task_complete_callbacks.append(callback)
+    
+    def add_failed_callback(self, callback: Callable[[ManagedTask], None]):
+        """添加任务失败回调"""
+        self._on_task_failed_callbacks.append(callback)
+    
+    def print_status(self):
+        """打印管理器状态"""
+        stats = self.get_stats()
+        
+        print("\n" + "="*60)
+        print("TaskManager 状态报告")
+        print("="*60)
+        print(f"运行状态: {'运行中' if self._running else '已停止'}")
+        print(f"最大并发数: {self.max_concurrent_tasks}")
+        print("\n统计信息:")
+        print(f"  总提交任务: {stats['total_submitted']}")
+        print(f"  已完成: {stats['total_completed']}")
+        print(f"  失败: {stats['total_failed']}")
+        print(f"  取消: {stats['total_cancelled']}")
+        print(f"  重试次数: {stats['total_retries']}")
+        print(f"  当前运行: {stats['current_running']}")
+        print(f"  队列中: {stats['current_queued']}")
+        print(f"  等待依赖: {stats['current_waiting']}")
+        
+        # 显示运行中的任务
+        running_tasks = self.get_tasks_by_state(TaskState.RUNNING)
+        if running_tasks:
+            print("\n运行中的任务:")
+            for task_id, task in running_tasks.items():
+                print(f"  - {task.name} (ID: {task_id})")
+                print(f"    优先级: {task.config.priority.name}, "
+                      f"运行时长: {task.duration:.2f}s")
+        
+        print("="*60 + "\n")
+
+
+# 全局实例
+_task_manager_instance: Optional[TaskManager] = None
+
+
+def get_task_manager(
+    max_concurrent_tasks: int = 10,
+    enable_watchdog: bool = True
+) -> TaskManager:
+    """
+    获取全局 TaskManager 实例
+    
+    Args:
+        max_concurrent_tasks: 最大并发任务数
+        enable_watchdog: 是否启用 Watchdog
+    
+    Returns:
+        TaskManager 实例
+    """
+    global _task_manager_instance
+    if _task_manager_instance is None:
+        _task_manager_instance = TaskManager(
+            max_concurrent_tasks=max_concurrent_tasks,
+            enable_watchdog=enable_watchdog
+        )
+    return _task_manager_instance

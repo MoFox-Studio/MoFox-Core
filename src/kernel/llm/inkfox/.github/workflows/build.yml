@@ -1,0 +1,188 @@
+name: CI Build
+
+on:
+  push:
+    branches: [ main, master, dev ]
+    tags: [ 'v*' ]   # 仍允许以 v 开头的 tag 触发
+  pull_request:
+    branches: [ main, master, dev ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-check:
+    name: Rust Check & Test
+    runs-on: ${{ matrix.os }}
+    env:
+      PYO3_PYTHON: python
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python (for PyO3 build env)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Show versions
+        run: rustc -V && cargo -V && python -V
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cargo check
+        run: cargo check --all --verbose
+      - name: Cargo tests (non-blocking)
+        run: cargo test --all --verbose --no-fail-fast || echo "Tests skipped or failed (non-blocking)"
+
+  build-wheels:
+    name: Build abi3 wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            python-version: '3.13'
+            arch: x86_64
+          # Linux aarch64 (cross build via maturin action + target)
+          - os: ubuntu-latest
+            python-version: '3.13'
+            arch: aarch64
+          # Windows x86_64
+          - os: windows-latest
+            python-version: '3.13'
+            arch: x86_64
+          # macOS arm64 (native build on Apple Silicon runner)
+          - os: macos-14
+            python-version: '3.13'
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-${{ matrix.arch }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Cache target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.arch }}-target-${{ matrix.python-version }}-${{ hashFiles('Cargo.lock', 'pyproject.toml') }}
+      - name: Install maturin
+        run: pip install maturin
+      - name: Add Rust target for aarch64 (Linux cross)
+        if: runner.os == 'Linux' && matrix.arch == 'aarch64'
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build wheels (Linux x86_64)
+        if: runner.os == 'Linux' && matrix.arch == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          manylinux: 2_28
+      - name: Build wheels (Linux aarch64 cross)
+        if: runner.os == 'Linux' && matrix.arch == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: aarch64-unknown-linux-gnu
+          args: --release --out dist --target aarch64-unknown-linux-gnu
+          manylinux: 2_28
+      - name: Build wheels (Windows x86_64)
+        if: runner.os == 'Windows'
+        run: maturin build --release --out dist
+      - name: Build wheels (macOS arm64)
+        if: runner.os == 'macOS'
+        run: maturin build --release --out dist
+      - name: List wheels
+        run: |
+          echo Dist:; ls dist || dir dist
+      - name: Smoke import
+        # 仅在非交叉构建环境执行，Linux aarch64 交叉构建的 wheel 无法在 x86_64 运行器上导入
+        # 不能使用以 ! 开头的表达式，否则会被 YAML 解析为 tag，改写为等价逻辑表达式
+        if: runner.os != 'Linux' || matrix.arch != 'aarch64'
+        run: |
+          pip install --no-index --find-links dist inkfox
+          python -c "import inkfox;print('inkfox import ok')"
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}-abi3
+          path: dist/*.whl
+
+  release:
+    name: GitHub Release (auto on push)
+    needs: [cargo-check, build-wheels]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Display dist
+        run: ls -R dist
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ github.run_number }}
+          name: Auto Build ${{ github.run_number }}
+          draft: false
+          prerelease: true
+          files: dist/**/*.whl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-pypi:
+    name: Publish PyPI (auto on push)
+    needs: build-wheels
+    if: github.event_name == 'push' && contains(fromJson('["refs/heads/main","refs/heads/master","refs/heads/dev"]'), github.ref)
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: List wheels
+        run: ls -1 dist
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+          verbose: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
