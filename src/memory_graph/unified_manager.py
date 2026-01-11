@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from src.common.logger import get_logger
+from src.config.config import global_config
 from src.memory_graph.long_term_manager import LongTermMemoryManager
 from src.memory_graph.manager import MemoryManager
 from src.memory_graph.models import JudgeDecision, MemoryBlock, ShortTermMemory
@@ -161,7 +162,7 @@ class UnifiedMemoryManager:
             await self.long_term_manager.initialize()
 
             self._initialized = True
-            logger.info("统一记忆管理器初始化完成")
+            logger.debug("统一记忆管理器初始化完成")
 
             # 启动自动转移任务
             self._start_auto_transfer_task()
@@ -260,7 +261,7 @@ class UnifiedMemoryManager:
 
                 # 步骤3: 如果不充足，检索长期记忆
                 if not judge_decision.is_sufficient:
-                    logger.info("判官判断记忆不足，开始检索长期记忆")
+                    logger.debug("判官判断记忆不足，开始检索长期记忆")
 
                     queries = [query_text, *judge_decision.additional_queries]
                     long_term_memories = await self._retrieve_long_term_memories(
@@ -273,10 +274,14 @@ class UnifiedMemoryManager:
 
             else:
                 # 不使用裁判，直接检索长期记忆
+                # 根据配置决定是否启用查询优化（小模型生成查询）
+                # 如果 enable_query_optimization=False，则完全跳过小模型，实现真正的毫秒级急速响应
+                use_optimization = getattr(global_config.memory, "enable_query_optimization", True)
+
                 long_term_memories = await self.memory_manager.search_memories(
                     query=query_text,
                     top_k=5,
-                    use_multi_query=False,
+                    use_multi_query=use_optimization,
                 )
                 result["long_term_memories"] = long_term_memories
 
@@ -568,9 +573,9 @@ class UnifiedMemoryManager:
             self._transfer_wakeup_event.clear()
 
         self._auto_transfer_task = asyncio.create_task(self._auto_transfer_loop())
-        # 立即触发一次检查，避免启动初期的长时间等待
-        self._transfer_wakeup_event.set()
-        logger.debug("自动转移任务已启动并触发首次检查")
+        # 注意：不再在初始化时立即触发，避免启动早期状态不稳定导致死循环
+        # 让循环等待第一个标准间隔后自动执行首次检查
+        logger.debug("自动转移任务已启动，将在首个检查间隔后执行")
 
     async def _auto_transfer_loop(self) -> None:
         """自动转移循环（简化版：短期记忆满额时整批转移）"""
@@ -578,28 +583,33 @@ class UnifiedMemoryManager:
         while True:
             try:
                 sleep_interval = self._calculate_auto_sleep_interval()
-                if self._transfer_wakeup_event is not None:
-                    try:
-                        await asyncio.wait_for(
-                            self._transfer_wakeup_event.wait(),
-                            timeout=sleep_interval,
-                        )
+                
+                # 总是使用 wait_for 等待事件或超时，避免高频率轮询
+                try:
+                    await asyncio.wait_for(
+                        self._transfer_wakeup_event.wait() if self._transfer_wakeup_event else asyncio.sleep(sleep_interval),
+                        timeout=sleep_interval,
+                    )
+                    if self._transfer_wakeup_event:
                         self._transfer_wakeup_event.clear()
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    await asyncio.sleep(sleep_interval)
+                except asyncio.TimeoutError:
+                    # 超时是正常的，继续执行检查
+                    pass
 
                 # 最简单策略：仅当短期记忆满额时，直接整批转移全部短期记忆；没满则不处理
                 max_memories = max(1, getattr(self.short_term_manager, "max_memories", 1))
-                if len(self.short_term_manager.memories) < max_memories:
+                current_memories = len(self.short_term_manager.memories) if self.short_term_manager else 0
+                
+                # 条件检查：只有在短期记忆满额时才转移
+                if current_memories < max_memories:
+                    # 容量未满，继续等待下一个检查间隔（不立即重试）
                     continue
 
-                batch = list(self.short_term_manager.memories)
+                batch = list(self.short_term_manager.memories) if self.short_term_manager else []
                 if not batch:
                     continue
 
-                logger.info(
+                logger.debug(
                     f"短期记忆已满({len(batch)}/{max_memories})，开始整批转移到长期记忆"
                 )
                 result = await self.long_term_manager.transfer_from_short_term(batch)
@@ -615,6 +625,11 @@ class UnifiedMemoryManager:
                 break
             except Exception as e:
                 logger.error(f"自动转移循环异常: {e}")
+                # 异常后等待较长时间再重试，避免陷入死循环
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    break
 
     async def manual_transfer(self) -> dict[str, Any]:
         """
@@ -647,7 +662,7 @@ class UnifiedMemoryManager:
                     result["transferred_memory_ids"]
                 )
 
-            logger.info(f"手动转移完成: {result}")
+            logger.debug(f"手动转移完成: {result}")
             return result
 
         except Exception as e:
@@ -700,7 +715,7 @@ class UnifiedMemoryManager:
                 await self.memory_manager.shutdown()
 
             self._initialized = False
-            logger.info("统一记忆管理器已关闭")
+            logger.debug("统一记忆管理器已关闭")
 
         except Exception as e:
             logger.error(f"关闭统一记忆管理器失败: {e}")

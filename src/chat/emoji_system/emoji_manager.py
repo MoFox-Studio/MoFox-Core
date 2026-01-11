@@ -729,7 +729,9 @@ class EmojiManager:
                     except (json.JSONDecodeError, AttributeError) as e:
                         logger.error(f"VLM JSON解析失败 (第 {i+1}/3 次): {e}")
                     except Exception as e:
-                        logger.error(f"VLM调用失败 (第 {i+1}/3 次): {e}")
+                        # 简化日志：只显示错误类型和简短消息
+                        error_brief = f"{type(e).__name__}: {str(e)[:80]}"
+                        logger.error(f"VLM调用失败 (第 {i+1}/3 次): {error_brief}")
 
                     description, emotions, refined_description = "", [], ""  # Reset for retry
                     if i < 2:

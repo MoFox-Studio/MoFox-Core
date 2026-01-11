@@ -167,6 +167,9 @@ class KokoroFlowChatterConfig:
     # 自定义决策提示词
     custom_decision_prompt: str = ""
 
+    # 极速模式配置
+    fast_mode_enabled: bool = False
+
     # 调试模式
     debug: bool = False
 
@@ -184,12 +187,73 @@ def get_config() -> KokoroFlowChatterConfig:
 
 
 def load_config() -> KokoroFlowChatterConfig:
-    """从全局配置加载 KFC 配置"""
+    """
+    加载 KFC 配置
+
+    加载逻辑：
+    1. 先从插件自身的 config.toml 加载（如果存在）
+    2. 再从全局配置 global_config.kokoro_flow_chatter 加载
+    3. 全局配置中的项会覆盖插件自身配置中的同名项
+    """
     from src.config.config import global_config
 
     config = KokoroFlowChatterConfig()
 
-    # 尝试从全局配置读取
+    # --- 1. 从插件自身配置文件加载 ---
+    try:
+        from pathlib import Path
+
+        import tomlkit
+
+        # 插件配置目录通常在 config/plugins/kokoro_flow_chatter/config.toml
+        plugin_cfg_path = Path("config/plugins/kokoro_flow_chatter/config.toml")
+        if plugin_cfg_path.exists():
+            with open(plugin_cfg_path, encoding="utf-8") as f:
+                plugin_data = tomlkit.load(f).unwrap()
+
+            # 简单映射插件配置文件的值到 config 对象
+            # 插件基础设置
+            if "plugin" in plugin_data and isinstance(plugin_data["plugin"], dict):
+                p = plugin_data["plugin"]
+                if "enabled" in p:
+                    config.enabled = bool(p["enabled"])
+
+            # 核心功能设置
+            if "main" in plugin_data and isinstance(plugin_data["main"], dict):
+                m = plugin_data["main"]
+                if "mode" in m:
+                    config.mode = KFCMode.from_str(str(m["mode"]))
+                if "fast_mode_enabled" in m:
+                    config.fast_mode_enabled = bool(m["fast_mode_enabled"])
+                if "custom_decision_prompt" in m:
+                    config.custom_decision_prompt = str(m["custom_decision_prompt"])
+
+            # 等待配置
+            if "waiting" in plugin_data and isinstance(plugin_data["waiting"], dict):
+                w = plugin_data["waiting"]
+                config.waiting.default_max_wait_seconds = w.get("default_max_wait_seconds", config.waiting.default_max_wait_seconds)
+                config.waiting.min_wait_seconds = w.get("min_wait_seconds", config.waiting.min_wait_seconds)
+                config.waiting.max_wait_seconds = w.get("max_wait_seconds", config.waiting.max_wait_seconds)
+                config.waiting.wait_duration_multiplier = float(w.get("wait_duration_multiplier", config.waiting.wait_duration_multiplier))
+                config.waiting.max_consecutive_timeouts = int(w.get("max_consecutive_timeouts", config.waiting.max_consecutive_timeouts))
+
+            # 主动思考配置
+            if "proactive" in plugin_data and isinstance(plugin_data["proactive"], dict):
+                p = plugin_data["proactive"]
+                config.proactive.enabled = bool(p.get("enabled", config.proactive.enabled))
+                config.proactive.silence_threshold_seconds = int(p.get("silence_threshold_seconds", config.proactive.silence_threshold_seconds))
+                config.proactive.min_interval_between_proactive = int(p.get("min_interval_between_proactive", config.proactive.min_interval_between_proactive))
+                config.proactive.quiet_hours_start = str(p.get("quiet_hours_start", config.proactive.quiet_hours_start))
+                config.proactive.quiet_hours_end = str(p.get("quiet_hours_end", config.proactive.quiet_hours_end))
+                config.proactive.trigger_probability = float(p.get("trigger_probability", config.proactive.trigger_probability))
+                config.proactive.min_affinity_for_proactive = float(p.get("min_affinity_for_proactive", config.proactive.min_affinity_for_proactive))
+
+    except Exception as e:
+        from src.common.logger import get_logger
+        logger = get_logger("kfc_config")
+        logger.warning(f"从插件配置文件加载失败: {e}")
+
+    # --- 2. 从全局配置覆盖 ---
     if not global_config:
         return config
 
@@ -213,11 +277,11 @@ def load_config() -> KokoroFlowChatterConfig:
             if hasattr(kfc_cfg, "waiting"):
                 wait_cfg = kfc_cfg.waiting
                 config.waiting = WaitingDefaults(
-                    default_max_wait_seconds=getattr(wait_cfg, "default_max_wait_seconds", 300),
-                    min_wait_seconds=getattr(wait_cfg, "min_wait_seconds", 30),
-                    max_wait_seconds=getattr(wait_cfg, "max_wait_seconds", 1800),
-                    wait_duration_multiplier=getattr(wait_cfg, "wait_duration_multiplier", 1.0),
-                    max_consecutive_timeouts=getattr(wait_cfg, "max_consecutive_timeouts", 3),
+                    default_max_wait_seconds=getattr(wait_cfg, "default_max_wait_seconds", config.waiting.default_max_wait_seconds),
+                    min_wait_seconds=getattr(wait_cfg, "min_wait_seconds", config.waiting.min_wait_seconds),
+                    max_wait_seconds=getattr(wait_cfg, "max_wait_seconds", config.waiting.max_wait_seconds),
+                    wait_duration_multiplier=getattr(wait_cfg, "wait_duration_multiplier", config.waiting.wait_duration_multiplier),
+                    max_consecutive_timeouts=getattr(wait_cfg, "max_consecutive_timeouts", config.waiting.max_consecutive_timeouts),
                 )
 
             # 主动思考配置 - 支持 proactive 和 proactive_thinking 两种写法
@@ -227,52 +291,56 @@ def load_config() -> KokoroFlowChatterConfig:
 
             if pro_cfg:
                 config.proactive = ProactiveConfig(
-                    enabled=getattr(pro_cfg, "enabled", True),
-                    silence_threshold_seconds=getattr(pro_cfg, "silence_threshold_seconds", 7200),
-                    min_interval_between_proactive=getattr(pro_cfg, "min_interval_between_proactive", 1800),
-                    quiet_hours_start=getattr(pro_cfg, "quiet_hours_start", "23:00"),
-                    quiet_hours_end=getattr(pro_cfg, "quiet_hours_end", "07:00"),
-                    trigger_probability=getattr(pro_cfg, "trigger_probability", 0.3),
-                    min_affinity_for_proactive=getattr(pro_cfg, "min_affinity_for_proactive", 0.3),
+                    enabled=getattr(pro_cfg, "enabled", config.proactive.enabled),
+                    silence_threshold_seconds=getattr(pro_cfg, "silence_threshold_seconds", config.proactive.silence_threshold_seconds),
+                    min_interval_between_proactive=getattr(pro_cfg, "min_interval_between_proactive", config.proactive.min_interval_between_proactive),
+                    quiet_hours_start=getattr(pro_cfg, "quiet_hours_start", config.proactive.quiet_hours_start),
+                    quiet_hours_end=getattr(pro_cfg, "quiet_hours_end", config.proactive.quiet_hours_end),
+                    trigger_probability=getattr(pro_cfg, "trigger_probability", config.proactive.trigger_probability),
+                    min_affinity_for_proactive=getattr(pro_cfg, "min_affinity_for_proactive", config.proactive.min_affinity_for_proactive),
                 )
 
             # 提示词配置
             if hasattr(kfc_cfg, "prompt"):
                 pmt_cfg = kfc_cfg.prompt
                 config.prompt = PromptConfig(
-                    max_activity_entries=getattr(pmt_cfg, "max_activity_entries", 30),
-                    max_entry_length=getattr(pmt_cfg, "max_entry_length", 500),
+                    max_activity_entries=getattr(pmt_cfg, "max_activity_entries", config.prompt.max_activity_entries),
+                    max_entry_length=getattr(pmt_cfg, "max_entry_length", config.prompt.max_entry_length),
                     activity_stream_format=getattr(
                         pmt_cfg,
                         "activity_stream_format",
-                        getattr(pmt_cfg, "activity_format", "narrative"),
+                        getattr(pmt_cfg, "activity_format", config.prompt.activity_stream_format),
                     ),
-                    include_relation=getattr(pmt_cfg, "include_relation", True),
-                    include_memory=getattr(pmt_cfg, "include_memory", True),
+                    include_relation=getattr(pmt_cfg, "include_relation", config.prompt.include_relation),
+                    include_memory=getattr(pmt_cfg, "include_memory", config.prompt.include_memory),
                 )
 
             # 会话配置
             if hasattr(kfc_cfg, "session"):
                 sess_cfg = kfc_cfg.session
                 config.session = SessionConfig(
-                    session_dir=getattr(sess_cfg, "session_dir", "kokoro_flow_chatter/sessions"),
-                    session_expire_seconds=getattr(sess_cfg, "session_expire_seconds", 86400 * 7),
-                    max_mental_log_entries=getattr(sess_cfg, "max_mental_log_entries", 100),
+                    session_dir=getattr(sess_cfg, "session_dir", config.session.session_dir),
+                    session_expire_seconds=getattr(sess_cfg, "session_expire_seconds", config.session.session_expire_seconds),
+                    max_mental_log_entries=getattr(sess_cfg, "max_mental_log_entries", config.session.max_mental_log_entries),
                 )
 
             # LLM 配置
             if hasattr(kfc_cfg, "llm"):
                 llm_cfg = kfc_cfg.llm
                 config.llm = LLMConfig(
-                    model_name=getattr(llm_cfg, "model_name", ""),
-                    temperature=getattr(llm_cfg, "temperature", 0.8),
-                    max_tokens=getattr(llm_cfg, "max_tokens", 1024),
-                    timeout=getattr(llm_cfg, "timeout", 60.0),
+                    model_name=getattr(llm_cfg, "model_name", config.llm.model_name),
+                    temperature=getattr(llm_cfg, "temperature", config.llm.temperature),
+                    max_tokens=getattr(llm_cfg, "max_tokens", config.llm.max_tokens),
+                    timeout=getattr(llm_cfg, "timeout", config.llm.timeout),
                 )
 
             # 自定义决策提示词配置
             if hasattr(kfc_cfg, "custom_decision_prompt"):
                 config.custom_decision_prompt = str(kfc_cfg.custom_decision_prompt)
+
+            # 极速模式配置
+            if hasattr(kfc_cfg, "fast_mode_enabled"):
+                config.fast_mode_enabled = bool(kfc_cfg.fast_mode_enabled)
 
     except Exception as e:
         from src.common.logger import get_logger

@@ -99,7 +99,7 @@ class DemoWsAdapter(AdapterBase):   # 继承AdapterBase
             "sender": {"user_id": raw["user_id"], "role": "user"},
             "conversation_id": raw["channel_id"],
             "content": {"type": "text", "text": raw["text"]},
-        }
+        } # type: ignore
 
 def incoming_parser(raw: str | bytes) -> Any:
     data = orjson.loads(raw)

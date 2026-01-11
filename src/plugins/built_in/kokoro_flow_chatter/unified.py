@@ -300,6 +300,7 @@ async def generate_unified_response(
     chat_stream: Optional["ChatStream"] = None,
     available_actions: dict | None = None,
     extra_context: dict | None = None,
+    fast_mode: bool = False,
 ) -> LLMResponse:
     """
     统一模式：单次 LLM 调用生成完整响应
@@ -325,7 +326,9 @@ async def generate_unified_response(
         extra_context = extra_context or {}
 
         # 获取上下文数据（关系、记忆等）
-        context_data = await _build_context_data(user_name, chat_stream, session.user_id)
+        context_data = await _build_context_data(
+            user_name, chat_stream, session.user_id, fast_mode=fast_mode
+        )
 
         # 根据情况类型选择提示词生成方法
         if situation_type == "timeout":
@@ -421,6 +424,7 @@ async def _build_context_data(
     user_name: str,
     chat_stream: Optional["ChatStream"],
     user_id: str | None = None,
+    fast_mode: bool = False,
 ) -> dict[str, str]:
     """
     构建上下文数据（关系、记忆、工具、表达习惯等）
@@ -454,6 +458,7 @@ async def _build_context_data(
             target_message=target_message,
             context=chat_stream.context,
             user_id=user_id,
+            fast_mode=fast_mode,
         )
 
         # 打印关键信息

@@ -24,18 +24,19 @@ def require_permission(permission_node: str, deny_message: str | None = None, *,
     Args:
         permission_node: 所需的权限节点名称
         deny_message: 权限不足时的提示消息，如果为None则使用默认消息
-        use_full_name: 是否使用完整的权限节点名称（默认False）
-            - True: permission_node 必须是完整的权限节点名称，如 "plugins.plugin_name.action"
-            - False: permission_node 可以是短名称，如 "action"，装饰器会自动添加 "plugins.{plugin_name}." 前缀
+        use_full_name: 是否明确声明传入的是完整的权限节点（默认False）
+            - True: permission_node 已是完整节点名称，如 "plugins.plugin_name.action"，不会再添加前缀
+            - False: permission_node 可以是短名称，如 "action"，装饰器会自动添加 "plugins.{plugin_name}." 前缀。
+              若传入的值已以 "plugins." 开头，将被视为完整名称并跳过自动前缀（防止重复拼接）。
 
     Example:
         # 使用完整名称（传统方式）
-        @require_permission("plugins.example.admin")
+        @require_permission("plugins.example.admin", use_full_name=True)
         async def admin_command(self):
             pass
 
-        # 使用短名称（新方式，类似 PermissionNodeField）
-        @require_permission("admin", use_full_name=True)
+        # 使用短名称（推荐方式）
+        @require_permission("admin")
         async def admin_command(self):
             # 会自动转换为 "plugins.{当前插件名}.admin"
             pass
@@ -83,19 +84,26 @@ def require_permission(permission_node: str, deny_message: str | None = None, *,
                 logger.error(f"权限装饰器无法找到 ChatStream 对象，函数: {func.__name__}")
                 return None
 
-            # 构建完整的权限节点名称
+            # 构建完整的权限节点名称（健壮处理，避免重复前缀）
             full_permission_node = permission_node
             if not use_full_name:
-                # 需要自动构建完整名称
-                if not plugin_name:
-                    logger.error(
-                        f"权限装饰器无法推断插件名，函数: {func.__name__}，"
-                        "请使用 use_full_name=True 或确保在插件类中调用"
+                # 如果传入的节点已以 "plugins." 开头，视为完整名称，跳过自动前缀
+                if permission_node.startswith("plugins."):
+                    logger.debug(
+                        f"权限节点已为完整名称，跳过自动构建: {permission_node} (函数: {func.__name__})"
                     )
-                    return None
+                else:
+                    if not plugin_name:
+                        logger.error(
+                            f"权限装饰器无法推断插件名，函数: {func.__name__}，"
+                            "请使用 use_full_name=True 或确保在插件类中调用"
+                        )
+                        return None
 
-                full_permission_node = f"plugins.{plugin_name}.{permission_node}"
-                logger.info(f"自动构建权限节点: {permission_node} -> {full_permission_node} (插件: {plugin_name})")
+                    full_permission_node = f"plugins.{plugin_name}.{permission_node}"
+                    logger.info(
+                        f"自动构建权限节点: {permission_node} -> {full_permission_node} (插件: {plugin_name})"
+                    )
 
             # 检查权限
             if not chat_stream.user_info or not chat_stream.user_info.user_id:

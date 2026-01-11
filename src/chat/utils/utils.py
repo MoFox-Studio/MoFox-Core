@@ -188,22 +188,31 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
     Returns:
         List[str]: 分割和合并后的句子列表
     """
+    # --- 1. 预处理与保护 ---
+    # 保护 URL
+    url_pattern = r'https?://[^\s，。！？”）》]+'
+    urls = re.findall(url_pattern, text)
+    for idx, url in enumerate(urls):
+        text = text.replace(url, f"__URL_PROTECT_{idx}__")
+
+    # 保护成对标点
+    pair_pattern = r'([（\(《「].*?[）\)》」])'
+    pairs = re.findall(pair_pattern, text)
+    for idx, pair in enumerate(pairs):
+        text = text.replace(pair, f"__PAIR_PROTECT_{idx}__")
+
     # 预处理：处理多余的换行符
-    # 1. 将连续的换行符替换为单个换行符
     text = re.sub(r"\n\s*\n+", "\n", text)
-    # 2. 处理换行符和其他分隔符的组合
     text = re.sub(r"\n\s*([，,。;\s])", r"\1", text)
     text = re.sub(r"([，,。;\s])\s*\n", r"\1", text)
-
-    # 处理两个汉字中间的换行符
     text = re.sub(r"([\u4e00-\u9fff])\n([\u4e00-\u9fff])", r"\1。\2", text)
 
     len_text = len(text)
     if len_text < 3:
         return list(text) if random.random() < 0.01 else [text]
 
-    # 定义分隔符
-    separators = {"，", ",", " ", "。", ";"}
+    # 定义分隔符 (扩充了常用聊天符号)
+    separators = {"，", ",", " ", "。", ";", "∽", "≈", "~", "～", "…", "！", "!", "？", "?"}
     segments = []
     current_segment = ""
 
@@ -212,40 +221,32 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
     while i < len(text):
         char = text[i]
         if char in separators:
-            # 检查分割条件：如果分隔符左右都是英文字母，则不分割
             can_split = True
             if 0 < i < len(text) - 1:
                 prev_char = text[i - 1]
                 next_char = text[i + 1]
-                # if is_english_letter(prev_char) and is_english_letter(next_char) and char == ' ': # 原计划只对空格应用此规则，现应用于所有分隔符
                 if is_english_letter(prev_char) and is_english_letter(next_char):
                     can_split = False
 
             if can_split:
-                # 只有当当前段不为空时才添加
                 if current_segment:
                     segments.append((current_segment, char))
-                # 如果当前段为空，但分隔符是空格，则也添加一个空段（保留空格）
                 elif char == " ":
                     segments.append(("", char))
                 current_segment = ""
             else:
-                # 不分割，将分隔符加入当前段
                 current_segment += char
         else:
             current_segment += char
         i += 1
 
-    # 添加最后一个段（没有后续分隔符）
     if current_segment:
         segments.append((current_segment, ""))
 
-    # 过滤掉完全空的段（内容和分隔符都为空）
     segments = [(content, sep) for content, sep in segments if content or sep]
 
-    # 如果分割后为空（例如，输入全是分隔符且不满足保留条件），恢复颜文字并返回
     if not segments:
-        return [text] if text else []  # 如果原始文本非空，则返回原始文本（可能只包含未被分割的字符或颜文字占位符）
+        return [text] if text else []
 
     # 2. 概率合并
     if len_text < 12:
@@ -254,7 +255,6 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
         split_strength = 0.6
     else:
         split_strength = 0.7
-    # 合并概率与分割强度相反
     merge_probability = 1.0 - split_strength
 
     merged_segments = []
@@ -262,31 +262,54 @@ def split_into_sentences_w_remove_punctuation(text: str) -> list[str]:
     while idx < len(segments):
         current_content, current_sep = segments[idx]
 
-        # 检查是否可以与下一段合并
-        # 条件：不是最后一段，且随机数小于合并概率，且当前段有内容（避免合并空段）
-        if idx + 1 < len(segments) and random.random() < merge_probability and current_content:
+        # --- 优化：根据标点类型调整合并概率 ---
+        current_merge_prob = merge_probability
+        # 句号、分号等强标点：极难合并 (降低 90%)
+        if current_sep in {"。", "；", ";"}:
+            current_merge_prob *= 0.1
+        # 问号、感叹号：较难合并 (降低 70%)
+        elif current_sep in {"！", "!", "？", "?"}:
+            current_merge_prob *= 0.3
+        # 逗号、语气词、空格：更容易合并 (提升 20%)
+        elif current_sep in {"，", ",", " ", "~", "～", "♪", "…", "∽", "≈"}:
+            current_merge_prob *= 1.2
+
+        if idx + 1 < len(segments) and random.random() < current_merge_prob and current_content:
             next_content, next_sep = segments[idx + 1]
-            # 合并: (内容1 + 分隔符1 + 内容2, 分隔符2)
-            # 只有当下一段也有内容时才合并文本，否则只传递分隔符
             if next_content:
                 merged_content = current_content + current_sep + next_content
                 merged_segments.append((merged_content, next_sep))
-            else:  # 下一段内容为空，只保留当前内容和下一段的分隔符
+            else:
                 merged_segments.append((current_content, next_sep))
-
-            idx += 2  # 跳过下一段，因为它已被合并
+            idx += 2
         else:
-            # 不合并，直接添加当前段
             merged_segments.append((current_content, current_sep))
             idx += 1
 
     # 提取最终的句子内容
-    final_sentences = [content for content, sep in merged_segments if content]  # 只保留有内容的段
+    final_sentences = []
+    for i, (content, sep) in enumerate(merged_segments):
+        if not content: continue
+        
+        # --- 优化：保护语气符号不被移除 ---
+        # 如果是最后一段，或者分隔符是语气/情感符号，则保留分隔符
+        if i == len(merged_segments) - 1 or sep in {"∽", "≈", "~", "～", "…", "！", "!", "？", "?"}:
+            final_sentences.append(content + sep)
+        else:
+            # 只有功能性标点（逗号、句号、空格）在分割点才被移除
+            final_sentences.append(content)
 
-    # 清理可能引入的空字符串和仅包含空白的字符串
-    final_sentences = [
-        s for s in final_sentences if s.strip()
-    ]  # 过滤掉空字符串以及仅包含空白（如换行符、空格）的字符串
+    final_sentences = [s for s in final_sentences if s.strip()]
+
+    # --- 3. 恢复保护内容 ---
+    def recover(s: str) -> str:
+        for idx, url in enumerate(urls):
+            s = s.replace(f"__URL_PROTECT_{idx}__", url)
+        for idx, pair in enumerate(pairs):
+            s = s.replace(f"__PAIR_PROTECT_{idx}__", pair)
+        return s
+
+    final_sentences = [recover(s) for s in final_sentences]
 
     logger.debug(f"分割并合并后的句子: {final_sentences}")
     return final_sentences
@@ -417,7 +440,6 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
         return [text]
 
     # --- 三层防护系统 ---
-    # --- 三层防护系统 ---
     # 第一层：保护颜文字
     protected_text, kaomoji_mapping = protect_kaomoji(text) if global_config.response_splitter.enable_kaomoji_protection else (text, {})
 
@@ -443,13 +465,6 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
 
     # 对清理后的文本进行进一步处理
     max_sentence_num = global_config.response_splitter.max_sentence_num
-
-    # --- 移除总长度检查 ---
-    # 原有的总长度检查会导致长回复被直接丢弃，现已移除，由后续的智能合并逻辑处理。
-    # max_length = global_config.response_splitter.max_length * 2
-    # if get_western_ratio(cleaned_text) < 0.1 and len(cleaned_text) > max_length:
-    #     logger.warning(f"回复过长 ({len(cleaned_text)} 字符)，返回默认回复")
-    #     return ["懒得说"]
 
     # 🔧 内存优化：使用单例工厂函数，避免重复创建拼音字典
     typo_generator = get_typo_generator(
@@ -493,33 +508,35 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
         num_to_merge = len(sentences) - max_sentence_num
 
         for _ in range(num_to_merge):
-            # 如果句子数量已经达标，提前退出
             if len(sentences) <= max_sentence_num:
                 break
 
-            # 寻找最短的相邻句子对
-            min_len = float("inf")
+            # 寻找合并代价最小的相邻句子对
+            min_cost = float("inf")
             merge_idx = -1
             for i in range(len(sentences) - 1):
-                combined_len = len(sentences[i]) + len(sentences[i+1])
-                if combined_len < min_len:
-                    min_len = combined_len
+                # --- 优化：增加句号合并的“阻力” ---
+                resistance = 1.0
+                # 如果前一句以强标点结尾，合并代价翻 5 倍，使其极难被选中
+                if sentences[i].endswith(("。", "；", ";", "！", "!", "？", "?")):
+                    resistance = 5.0
+                
+                cost = (len(sentences[i]) + len(sentences[i+1])) * resistance
+                if cost < min_cost:
+                    min_cost = cost
                     merge_idx = i
 
-            # 如果找到了可以合并的对，则执行合并
             if merge_idx != -1:
-                # 将后一个句子合并到前一个句子
-                # 我们在合并时保留原始标点（如果有的话），或者添加一个逗号来确保可读性
-                merged_sentence = sentences[merge_idx] + "，" + sentences[merge_idx + 1]
+                # 合并时，如果原句没有标点，添加逗号；如果有标点，直接拼接
+                if not re.search(r'[^\u4e00-\u9fff\w]$', sentences[merge_idx]):
+                    merged_sentence = sentences[merge_idx] + "，" + sentences[merge_idx + 1]
+                else:
+                    merged_sentence = sentences[merge_idx] + sentences[merge_idx + 1]
+                
                 sentences[merge_idx] = merged_sentence
-                # 删除后一个句子
                 del sentences[merge_idx + 1]
 
         logger.info(f"智能合并完成，最终消息数量: {len(sentences)}")
-
-    # if extracted_contents:
-    #     for content in extracted_contents:
-    #         sentences.append(content)
 
     # --- 恢复所有被保护的内容 ---
     sentences = recover_special_blocks(sentences, special_blocks_mapping)
@@ -549,12 +566,6 @@ def calculate_typing_time(
     - 在所有输入结束后，额外加上回车时间0.3秒
     - 如果is_emoji为True，将使用固定1秒的输入时间
     """
-    # # 将0-1的唤醒度映射到-1到1
-    # mood_arousal = mood_manager.current_mood.arousal
-    # # 映射到0.5到2倍的速度系数
-    # typing_speed_multiplier = 1.5**mood_arousal  # 唤醒度为1时速度翻倍,为-1时速度减半
-    # chinese_time *= 1 / typing_speed_multiplier
-    # english_time *= 1 / typing_speed_multiplier
     # 计算中文字符数
     chinese_chars = sum("\u4e00" <= char <= "\u9fff" for char in input_string)
 
@@ -572,12 +583,7 @@ def calculate_typing_time(
     if time.time() - thinking_start_time > 10:
         total_time = 1
 
-    # print(f"thinking_start_time:{thinking_start_time}")
-    # print(f"nowtime:{time.time()}")
-    # print(f"nowtime - thinking_start_time:{time.time() - thinking_start_time}")
-    # print(f"{total_time}")
-
-    return total_time  # 加上回车时间
+    return total_time
 
 
 def cosine_similarity(v1, v2):
@@ -711,13 +717,10 @@ async def count_messages_between(start_time: float, end_time: float, stream_id: 
 
     # 参数校验 (可选但推荐)
     if start_time >= end_time:
-        # logger.debug(f"开始时间 {start_time} 大于或等于结束时间 {end_time}，返回 0, 0")
         return 0, 0
     if not stream_id:
         logger.error("stream_id 不能为空")
         return 0, 0
-
-    # 使用message_repository中的count_messages和find_messages函数
 
     # 构建查询条件
     filter_query = {"chat_id": stream_id, "time": {"$gt": start_time, "$lte": end_time}}
@@ -806,29 +809,24 @@ async def get_chat_type_and_target_info(chat_id: str) -> tuple[bool, dict | None
 
                 # Try to fetch person info
                 try:
-                    # Assume get_person_id is sync (as per original code), keep using to_thread
                     person_id = PersonInfoManager.get_person_id(platform, user_id)
                     person_name = None
                     if person_id:
                         person_info_manager = get_person_info_manager()
                         try:
-                            # 如果没有运行的事件循环，直接 asyncio.run
                             loop = asyncio.get_event_loop()
                             if loop.is_running():
-                                # 如果事件循环在运行，从其他线程提交并等待结果
                                 try:
                                     fut = asyncio.run_coroutine_threadsafe(
                                         person_info_manager.get_value(person_id, "person_name"), loop
                                     )
                                     person_name = fut.result(timeout=2)
                                 except Exception as e:
-                                    # 无法在运行循环上安全等待，退回为 None
                                     logger.debug(f"无法通过运行的事件循环获取 person_name: {e}")
                                     person_name = None
                             else:
                                 person_name = asyncio.run(person_info_manager.get_value(person_id, "person_name"))
                         except RuntimeError:
-                            # get_event_loop 在某些上下文可能抛出 RuntimeError，退回到 asyncio.run
                             try:
                                 person_name = asyncio.run(person_info_manager.get_value(person_id, "person_name"))
                             except Exception as e:
@@ -847,7 +845,6 @@ async def get_chat_type_and_target_info(chat_id: str) -> tuple[bool, dict | None
             logger.warning(f"无法获取 chat_stream for {chat_id} in utils")
     except Exception as e:
         logger.error(f"获取聊天类型和目标信息时出错 for {chat_id}: {e}")
-        # Keep defaults on error
 
     return is_group_chat, chat_target_info
 
@@ -890,16 +887,13 @@ def assign_message_ids_flexible(
     used_ids = set()
 
     for i, message in enumerate(messages):
-        # 生成唯一的ID
         while True:
             if use_timestamp:
-                # 使用时间戳的后几位 + 随机字符
                 timestamp_suffix = str(int(time.time() * 1000))[-3:]
                 remaining_length = id_length - 3
                 random_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=remaining_length))
                 message_id = f"{prefix}{timestamp_suffix}{random_chars}"
             else:
-                # 使用索引 + 随机字符
                 index_str = str(i + 1)
                 remaining_length = max(1, id_length - len(index_str))
                 random_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=remaining_length))
@@ -914,38 +908,9 @@ def assign_message_ids_flexible(
     return result
 
 
-# 使用示例:
-# messages = ["Hello", "World", "Test message"]
-#
-# # 基础版本
-# result1 = assign_message_ids(messages)
-# # 结果: [{'id': 'm1123', 'message': 'Hello'}, {'id': 'm2456', 'message': 'World'}, {'id': 'm3789', 'message': 'Test message'}]
-#
-# # 增强版本 - 自定义前缀和长度
-# result2 = assign_message_ids_flexible(messages, prefix="chat", id_length=8)
-# # 结果: [{'id': 'chat1abc2', 'message': 'Hello'}, {'id': 'chat2def3', 'message': 'World'}, {'id': 'chat3ghi4', 'message': 'Test message'}]
-#
-# # 增强版本 - 使用时间戳
-# result3 = assign_message_ids_flexible(messages, prefix="ts", use_timestamp=True)
-# # 结果: [{'id': 'ts123a1b', 'message': 'Hello'}, {'id': 'ts123c2d', 'message': 'World'}, {'id': 'ts123e3f', 'message': 'Test message'}]
-
-
 def filter_system_format_content(content: str | None) -> str:
     """
     过滤系统格式化内容，移除回复、@、图片、表情包等系统生成的格式文本
-
-    此方法过滤以下类型的系统格式化内容：
-    1. 回复格式：[回复xxx]，说：xxx (包括深度嵌套)
-    2. 表情包格式：[表情包：xxx]
-    3. 图片格式：[图片:xxx]
-    4. @格式：@<xxx>
-    5. 错误格式：[表情包(...)]、[图片(...)]
-
-    Args:
-        content: 原始内容
-
-    Returns:
-        过滤后的纯文本内容
     """
     if not content:
         return ""
@@ -953,23 +918,15 @@ def filter_system_format_content(content: str | None) -> str:
     original_content = content
     cleaned_content = content.strip()
 
-    # 核心逻辑：优先处理最复杂的[回复...]格式，特别是嵌套格式。
-    # 这种方法最稳健：如果以[回复开头，就找到最后一个]，然后切掉之前的所有内容。
     if cleaned_content.startswith("[回复"):
         last_bracket_index = cleaned_content.rfind("]")
         if last_bracket_index != -1:
             cleaned_content = cleaned_content[last_bracket_index + 1 :].strip()
-            # 专门清理 "，说：" 或 "说："
             cleaned_content = re.sub(r"^(，|,)说：", "", cleaned_content).strip()
 
-    # 在处理完回复格式后，再清理其他简单的格式
-    # 新增：移除所有残余的 [...] 格式，例如 [at=...] 等
     cleaned_content = re.sub(r"\[.*?\]", "", cleaned_content)
-
-    # 移除@格式：@<xxx>
     cleaned_content = re.sub(r"@<[^>]*>", "", cleaned_content)
 
-    # 记录过滤操作
     if cleaned_content != original_content.strip():
         logger.info(
             f"[系统格式过滤器] 检测到并清理了系统格式化文本。"

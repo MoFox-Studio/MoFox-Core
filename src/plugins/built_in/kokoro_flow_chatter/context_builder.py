@@ -53,6 +53,7 @@ class KFCContextBuilder:
         context: Optional["StreamContext"] = None,
         user_id: str | None = None,
         enable_tool: bool = True,
+        fast_mode: bool = False,
     ) -> dict[str, str]:
         """
         并行构建所有上下文模块
@@ -73,7 +74,7 @@ class KFCContextBuilder:
 
         tasks = {
             "relation_info": self._build_relation_info(sender_name, target_message, user_id),
-            "memory_block": self._build_memory_block(chat_history, target_message, context),
+            "memory_block": self._build_memory_block(chat_history, target_message, context, fast_mode=fast_mode),
             "tool_info": self._build_tool_info(chat_history, sender_name, target_message, enable_tool),
             "expression_habits": self._build_expression_habits(chat_history, target_message),
             "schedule": self._build_schedule_block(),
@@ -210,6 +211,7 @@ class KFCContextBuilder:
         chat_history: str,
         target_message: str,
         context: Optional["StreamContext"] = None,
+        fast_mode: bool = False,
     ) -> str:
         """构建记忆块（使用三层记忆系统）"""
         config = _get_config()
@@ -235,7 +237,7 @@ class KFCContextBuilder:
 
             search_result = await unified_manager.search_memories(
                 query_text=query_text,
-                use_judge=config.memory.use_judge,
+                use_judge=False if fast_mode else config.memory.use_judge,
                 recent_chat_history=chat_history,
             )
 

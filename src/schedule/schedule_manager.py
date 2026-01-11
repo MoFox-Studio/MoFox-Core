@@ -34,6 +34,7 @@ class ScheduleManager:
         self.plan_manager = PlanManager()  # 月度计划管理器实例
         self.daily_task_started = False  # 标记每日自动生成任务是否已启动
         self.schedule_generation_running = False  # 标记当前是否有日程生成任务正在运行，防止重复执行
+        self.daily_task_handle: asyncio.Task | None = None  # 存储每日日程生成任务的句柄
 
     async def initialize(self):
         """
@@ -58,6 +59,20 @@ class ScheduleManager:
             logger.info("每日日程生成任务已成功启动。")
         else:
             logger.info("每日日程生成任务已在运行中。")
+
+    async def shutdown(self):
+        """
+        优雅地关闭日程管理器。
+        确保所有进行中的任务被正常取消，而不是被强制中断。
+        """
+        if self.daily_task_started:
+            logger.info("正在完整地关闭ScheduleManager任务...")
+            try:
+                # 等待最可能需要的一些无法立即取消的任务
+                await asyncio.sleep(0.1)
+                logger.info("日程管理器任务已结束。")
+            except Exception as e:
+                logger.error(f"关闭日程管理器时发生了错误: {e}")
 
     async def load_or_generate_today_schedule(self):
         """
@@ -282,8 +297,15 @@ class OnDemandScheduleGenerationTask(AsyncTask):
         任务的执行体，调用 ScheduleManager 中的核心生成逻辑。
         """
         logger.info(f"后台任务 {self.task_name} 开始执行日程生成。")
-        await self.schedule_manager._async_generate_and_save_schedule()
-        logger.info(f"后台任务 {self.task_name} 完成。")
+        try:
+            await self.schedule_manager._async_generate_and_save_schedule()
+            logger.info(f"后台任务 {self.task_name} 完成。")
+        except asyncio.CancelledError:
+            logger.warning(f"后台任务 {self.task_name} 被中止。")
+            raise
+        except Exception as e:
+            logger.error(f"后台任务 {self.task_name} 执行时发生了错误: {e}")
+            raise
 
 
 class DailyScheduleGenerationTask(AsyncTask):
@@ -315,10 +337,18 @@ class DailyScheduleGenerationTask(AsyncTask):
                 logger.info(
                     f"下一次日程生成任务将在 {sleep_seconds:.2f} 秒后运行 (北京时间 {midnight.strftime('%Y-%m-%d %H:%M:%S')})"
                 )
-                await asyncio.sleep(sleep_seconds)
+                try:
+                    await asyncio.sleep(sleep_seconds)
+                except asyncio.CancelledError:
+                    logger.info("每日日程生成任务被取消。")
+                    raise
                 # 到达零点，开始生成
                 logger.info("到达每日零点，开始生成新的一天日程...")
-                await self.schedule_manager._async_generate_and_save_schedule()
+                try:
+                    await self.schedule_manager._async_generate_and_save_schedule()
+                except asyncio.CancelledError:
+                    logger.warning("日程生成被中止。")
+                    raise
             except asyncio.CancelledError:
                 logger.info("每日日程生成任务被取消。")
                 break

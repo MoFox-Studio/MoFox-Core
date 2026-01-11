@@ -228,7 +228,7 @@ class BatchDatabaseWriter:
                     logger.error(f"单个写入也失败: {single_e}")
 
     async def _batch_write_to_database(self, payloads: list[StreamUpdatePayload]):
-        """批量写入数据库（单事务、多值 UPSERT）"""
+        """批量写入数据库（单事务、多值 UPSERT，带重试和会话清理）"""
         if global_config is None:
             raise RuntimeError("Global config is not initialized")
 
@@ -242,27 +242,59 @@ class BatchDatabaseWriter:
             row.update(p.update_data)
             rows.append(row)
 
-        async with get_db_session() as session:
-            # 使用单次事务提交，显著减少 I/O
-            if global_config.database.database_type == "postgresql":
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
-                stmt = pg_insert(ChatStreams).values(rows)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[ChatStreams.stream_id],
-                    set_={k: getattr(stmt.excluded, k) for k in rows[0].keys() if k != "stream_id"}
-                )
-                await session.execute(stmt)
-                await session.commit()
-            else:
-                # 默认（sqlite）
-                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-                stmt = sqlite_insert(ChatStreams).values(rows)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["stream_id"],
-                    set_={k: getattr(stmt.excluded, k) for k in rows[0].keys() if k != "stream_id"}
-                )
-                await session.execute(stmt)
-                await session.commit()
+        max_retries = 3
+        retry_delay = 0.1
+        
+        for attempt in range(max_retries):
+            session = None
+            try:
+                async with get_db_session() as session:
+                    # 使用单次事务提交，显著减少 I/O
+                    if global_config.database.database_type == "postgresql":
+                        from sqlalchemy.dialects.postgresql import insert as pg_insert
+                        stmt = pg_insert(ChatStreams).values(rows)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=[ChatStreams.stream_id],
+                            set_={k: getattr(stmt.excluded, k) for k in rows[0].keys() if k != "stream_id"}
+                        )
+                        await session.execute(stmt)
+                        await session.commit()
+                    else:
+                        # 默认（sqlite）
+                        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                        stmt = sqlite_insert(ChatStreams).values(rows)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=["stream_id"],
+                            set_={k: getattr(stmt.excluded, k) for k in rows[0].keys() if k != "stream_id"}
+                        )
+                        await session.execute(stmt)
+                        await session.commit()
+                
+                return  # 成功，退出重试
+                
+            except Exception as e:
+                error_str = str(e)
+                is_lock_error = "database is locked" in error_str or "locked" in error_str.lower()
+                is_rollback_error = "invalid transaction" in error_str or "rolled back" in error_str
+                
+                if (is_lock_error or is_rollback_error) and attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 1)
+                    logger.warning(f"批量写入ChatStreams遇到数据库问题，重试 {attempt + 1}/{max_retries}，等待 {wait_time:.2f}s: {error_str[:100]}")
+                    
+                    # 🔧 清理"脏" session
+                    if session is not None:
+                        try:
+                            if session.is_active:
+                                await session.rollback()
+                            await session.close()
+                        except Exception:
+                            pass
+                    
+                    await asyncio.sleep(wait_time)
+                else:
+                    # 最后一次重试失败，重新抛出
+                    logger.error(f"批量写入ChatStreams失败（尝试 {attempt + 1}/{max_retries}）: {e}")
+                    raise
     async def _direct_write(self, stream_id: str, update_data: dict[str, Any]):
         """直接写入数据库（降级方案）"""
         if global_config is None:

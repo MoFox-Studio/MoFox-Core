@@ -7,6 +7,11 @@ import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# 🔧 确保 src 模块可以被找到（在导入之前设置）
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
 # 初始化基础工具
 from colorama import Fore, init
 from dotenv import load_dotenv
@@ -47,6 +52,9 @@ MAX_ENV_FILE_SIZE = 1024 * 1024  # 1MB限制
 # 设置工作目录为脚本所在目录
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
+# 🔧 确保 src 模块可以被找到
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 logger.debug("工作目录已设置")
 
 

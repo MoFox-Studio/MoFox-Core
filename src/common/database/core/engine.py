@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool  # 🔧 改用 StaticPool 而不是 NullPool
 
 from src.common.logger import get_logger
 
@@ -95,6 +96,13 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
 
     Returns:
         (url, engine_kwargs) 元组
+
+    Note:
+        SQLite 使用 StaticPool 而非默认的 QueuePool，原因：
+        1. StaticPool 复用单个连接，避免频繁创建/销毁连接的开销
+        2. 相比 NullPool（每次新建连接），StaticPool 更高效
+        3. 相比 QueuePool（多连接池），StaticPool 避免 SQLite 文件锁冲突
+        4. 配合 WAL 模式和 busy_timeout，可以很好地处理并发读写
     """
     if not os.path.isabs(config.sqlite_path):
         ROOT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -110,13 +118,18 @@ def _build_sqlite_config(config) -> tuple[str, dict]:
     engine_kwargs = {
         "echo": False,
         "future": True,
+        # 🔧 使用 StaticPool 复用单个连接，避免 NullPool 的频繁创建开销
+        "poolclass": StaticPool,
+        # 启用健康检查，发现连接损坏时自动重连
+        "pool_pre_ping": True,
         "connect_args": {
             "check_same_thread": False,
-            "timeout": 60,
+            # 增加 timeout，让 SQLite 在遇到锁时等待更长时间
+            "timeout": 120,
         },
     }
 
-    logger.debug(f"SQLite配置: {db_path}")
+    logger.debug(f"SQLite配置: {db_path} (使用 StaticPool)")
     return url, engine_kwargs
 
 
@@ -207,8 +220,9 @@ async def _enable_sqlite_optimizations(engine: AsyncEngine):
             await conn.execute(text("PRAGMA synchronous = NORMAL"))
             # 启用外键约束
             await conn.execute(text("PRAGMA foreign_keys = ON"))
-            # 设置busy_timeout，避免锁定错误
-            await conn.execute(text("PRAGMA busy_timeout = 10000"))
+            # 设置busy_timeout（毫秒），遇到锁时等待更长时间，避免 "database is locked" 错误
+            # 120秒与连接配置的 timeout 保持一致
+            await conn.execute(text("PRAGMA busy_timeout = 120000"))
             # 设置缓存大小（10MB）
             await conn.execute(text("PRAGMA cache_size = -10000"))
             # 临时存储使用内存

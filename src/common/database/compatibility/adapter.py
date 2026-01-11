@@ -230,7 +230,25 @@ async def db_query(
             # 先查找记录
             query_builder = QueryBuilder(model_class)
             for field_name, value in filters.items():
-                query_builder = query_builder.filter(**{field_name: value})
+                if isinstance(value, dict):
+                    # 处理 MongoDB 风格的操作符
+                    for op, op_value in value.items():
+                        if op == "$gt":
+                            query_builder = query_builder.filter(**{f"{field_name}__gt": op_value})
+                        elif op == "$lt":
+                            query_builder = query_builder.filter(**{f"{field_name}__lt": op_value})
+                        elif op == "$gte":
+                            query_builder = query_builder.filter(**{f"{field_name}__gte": op_value})
+                        elif op == "$lte":
+                            query_builder = query_builder.filter(**{f"{field_name}__lte": op_value})
+                        elif op == "$ne":
+                            query_builder = query_builder.filter(**{f"{field_name}__ne": op_value})
+                        elif op == "$in":
+                            query_builder = query_builder.filter(**{f"{field_name}__in": op_value})
+                        elif op == "$nin":
+                            query_builder = query_builder.filter(**{f"{field_name}__nin": op_value})
+                else:
+                    query_builder = query_builder.filter(**{field_name: value})
 
             instance = await query_builder.first()
             if not instance:
@@ -249,7 +267,25 @@ async def db_query(
             # 先查找记录
             query_builder = QueryBuilder(model_class)
             for field_name, value in filters.items():
-                query_builder = query_builder.filter(**{field_name: value})
+                if isinstance(value, dict):
+                    # 处理 MongoDB 风格的操作符
+                    for op, op_value in value.items():
+                        if op == "$gt":
+                            query_builder = query_builder.filter(**{f"{field_name}__gt": op_value})
+                        elif op == "$lt":
+                            query_builder = query_builder.filter(**{f"{field_name}__lt": op_value})
+                        elif op == "$gte":
+                            query_builder = query_builder.filter(**{f"{field_name}__gte": op_value})
+                        elif op == "$lte":
+                            query_builder = query_builder.filter(**{f"{field_name}__lte": op_value})
+                        elif op == "$ne":
+                            query_builder = query_builder.filter(**{f"{field_name}__ne": op_value})
+                        elif op == "$in":
+                            query_builder = query_builder.filter(**{f"{field_name}__in": op_value})
+                        elif op == "$nin":
+                            query_builder = query_builder.filter(**{f"{field_name}__nin": op_value})
+                else:
+                    query_builder = query_builder.filter(**{field_name: value})
 
             instance = await query_builder.first()
             if not instance:

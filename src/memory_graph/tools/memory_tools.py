@@ -861,6 +861,26 @@ class MemoryTools:
             (查询列表, 偏好节点类型列表)
         """
         try:
+            # 🆕 优化：优先使用外部传入的 manual_multi_queries (由判官生成)，避免重复调用 LLM
+            if context and "manual_multi_queries" in context:
+                manual_queries = context["manual_multi_queries"]
+                if isinstance(manual_queries, list) and manual_queries:
+                    result_queries = []
+                    for item in manual_queries:
+                        if isinstance(item, dict):
+                            text = item.get("text", "").strip()
+                            weight = float(item.get("weight", 0.5))
+                            if text:
+                                result_queries.append((text, weight))
+                        elif isinstance(item, str) and item.strip():
+                            result_queries.append((item.strip(), 1.0))
+
+                    if result_queries:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(f"⚡ 使用外部提供的多重查询 ({len(result_queries)}个)，跳过LLM生成")
+                        # 外部查询不带偏好节点类型信息，默认为空
+                        return result_queries, []
+
             from src.config.config import model_config
             from src.llm_models.utils_model import LLMRequest
 

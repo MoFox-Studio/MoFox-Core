@@ -1,5 +1,5 @@
 [inner]
-version = "8.0.3"
+version = "8.0.5"
 
 #----以下是给开发人员阅读的，如果你只是部署了MoFox-Bot，不需要阅读----
 #如果你想要修改配置文件，请递增version的值
@@ -231,7 +231,7 @@ mood_update_threshold = 1 # 情绪更新阈值,越高，更新越慢
 
 [emoji]
 emoji_chance = 0.6 # MoFox-Bot激活表情包动作的概率
-emoji_activate_type = "llm" # 表情包激活类型，可选：random，llm ; random下，表情包动作随机启用，llm下，表情包动作根据llm判断是否启用
+emoji_activate_type = "llm" # 表情包激活类型，可选：random，llm, always ; random下，表情包动作随机启用，llm下，表情包动作根据llm判断是否启用,always下，表情包动作总是启用
 
 max_reg_num = 60 # 表情包最大注册数量
 do_replace = true # 开启则在达到最大数量时删除（替换）表情包，关闭则达到最大数量时不会继续收集表情包
@@ -314,7 +314,7 @@ short_term_search_top_k = 5 # 搜索时返回的最大数量
 short_term_decay_factor = 0.98 # 衰减因子
 
 # 长期记忆层配置
-use_judge = true # 使用评判模型决定是否检索长期记忆
+use_judge = true # 使用评判模型决定是否检索长期记忆。设置为 false 可启用"急速模式"（每次必搜，跳过判官思考，速度最快）
 long_term_batch_size = 10 # 批量转移大小
 long_term_decay_factor = 0.95 # 衰减因子
 long_term_auto_transfer_interval = 180 # 自动转移间隔（秒）

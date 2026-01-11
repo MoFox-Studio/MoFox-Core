@@ -465,7 +465,7 @@ async def build_system_prompt(
 
     # 组装输出模块（需要异步调用以支持注入）
     output_module = await build_output_module(params, context_data)
-    
+
     # 添加输出模块到列表
     modules.extend([
         "",

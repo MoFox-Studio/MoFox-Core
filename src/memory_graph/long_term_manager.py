@@ -63,6 +63,15 @@ class LongTermMemoryManager:
         self._pending_embeddings: list[tuple[str, str]] = []  # (node_id, content)
         self._embedding_batch_size = 10
         self._embedding_lock = asyncio.Lock()
+        self._failed_embedding_nodes: set[str] = set()  # 记录失败的节点ID，避免重复尝试
+        self._embedding_batch_retry_limit = 2
+        self._embedding_single_retry_limit = 2
+        self._embedding_failure_threshold = 3
+        self._embedding_consecutive_failures = 0
+        self._embedding_failure_attempts = 0
+        self._embedding_cooldown_seconds = 5.0
+        self._embedding_cooldown_until: float | None = None
+        self._embedding_failed_count = 0  # 最终失败的节点计数
 
         # 相似记忆缓存 (stm_id -> memories)
         self._similar_memory_cache: dict[str, list[Memory]] = {}
@@ -92,6 +101,10 @@ class LongTermMemoryManager:
             # 确保底层 MemoryManager 已初始化
             if not self.memory_manager._initialized:
                 await self.memory_manager.initialize()
+
+            # 类型断言：确保关键组件已初始化
+            assert self.memory_manager.graph_store is not None, "GraphStore未初始化"
+            assert self.memory_manager.persistence is not None, "Persistence未初始化"
 
             self._initialized = True
             logger.debug("长期记忆管理器初始化完成")
@@ -139,7 +152,7 @@ class LongTermMemoryManager:
                 batch_end = min(batch_start + self.batch_size, len(short_term_memories))
                 batch = short_term_memories[batch_start:batch_end]
 
-                logger.info(
+                logger.debug(
                     f"处理批次 {batch_start // self.batch_size + 1}/"
                     f"{(len(short_term_memories) - 1) // self.batch_size + 1} "
                     f"({len(batch)} 条记忆)"
@@ -168,7 +181,7 @@ class LongTermMemoryManager:
 
     async def _process_batch(self, batch: list[ShortTermMemory]) -> dict[str, Any]:
         """
-        处理一批短期记忆（并行处理）
+        处理一批短期记忆（并行处理，带并发控制）
 
         Args:
             batch: 短期记忆批次
@@ -185,29 +198,51 @@ class LongTermMemoryManager:
             "transferred_memory_ids": [],
         }
 
-        # 并行处理批次中的所有记忆
-        tasks = [self._process_single_memory(stm) for stm in batch]
+        # 从配置获取最大并发LLM调用数
+        max_concurrent = getattr(self.memory_manager.config, "max_concurrent_llm_calls", 3)
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def _process_with_limit(stm: ShortTermMemory) -> tuple[ShortTermMemory, dict[str, Any] | None]:
+            """带信号量限制的单记忆处理"""
+            async with semaphore:
+                single_result = await self._process_single_memory(stm)
+                return stm, single_result
+
+        # 并行处理批次中的所有记忆（但受信号量限制）
+        tasks = [_process_with_limit(stm) for stm in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 汇总结果
-        for stm, single_result in zip(batch, results):
-            if isinstance(single_result, Exception):
-                logger.error(f"处理短期记忆 {stm.id} 失败: {single_result}")
+        for item in results:
+            if isinstance(item, Exception):
+                logger.error(f"处理批次记忆失败: {item}")
                 result["failed_count"] += 1
-            elif single_result and isinstance(single_result, dict):
-                result["processed_count"] += 1
-                result["transferred_memory_ids"].append(stm.id)
+                continue
 
-                # 统计操作类型
-                operations = single_result.get("operations", [])
-                if isinstance(operations, list):
-                    for op_type in operations:
-                        if op_type == GraphOperationType.CREATE_MEMORY:
-                            result["created_count"] += 1
-                        elif op_type == GraphOperationType.UPDATE_MEMORY:
-                            result["updated_count"] += 1
-                        elif op_type == GraphOperationType.MERGE_MEMORIES:
-                            result["merged_count"] += 1
+            if not isinstance(item, tuple) or len(item) != 2:
+                logger.error(f"意外的结果格式: {item}")
+                result["failed_count"] += 1
+                continue
+
+            stm, single_result = item
+
+            if not single_result:
+                result["failed_count"] += 1
+                continue
+
+            result["processed_count"] += 1
+            result["transferred_memory_ids"].append(stm.id)
+
+            # 统计操作类型
+            operations = single_result.get("operations", [])
+            if isinstance(operations, list):
+                for op_type in operations:
+                    if op_type == GraphOperationType.CREATE_MEMORY:
+                        result["created_count"] += 1
+                    elif op_type == GraphOperationType.UPDATE_MEMORY:
+                        result["updated_count"] += 1
+                    elif op_type == GraphOperationType.MERGE_MEMORIES:
+                        result["merged_count"] += 1
             else:
                 result["failed_count"] += 1
 
@@ -287,8 +322,11 @@ class LongTermMemoryManager:
             from src.config.config import global_config
 
             # 检查是否启用了高级路径扩展算法
-            use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
-            expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
+            use_path_expansion = False
+            expand_depth = 0
+            if global_config and global_config.memory:
+                use_path_expansion = getattr(global_config.memory, "enable_path_expansion", False)
+                expand_depth = getattr(global_config.memory, "path_expansion_max_hops", 2) if use_path_expansion else 0
 
             # 1. 检索记忆
             memories = await self.memory_manager.search_memories(
@@ -405,6 +443,7 @@ class LongTermMemoryManager:
             prompt = self._build_graph_operation_prompt(stm, similar_memories)
 
             # 调用长期记忆构建模型
+            assert model_config.model_task_config is not None, "ModelTaskConfig未初始化"
             llm = LLMRequest(
                 model_set=model_config.model_task_config.memory_long_term_builder,
                 request_type="long_term_memory.graph_operations",
@@ -586,19 +625,28 @@ class LongTermMemoryManager:
             except Exception:
                 # 回退：尝试使用 json_repair 修复
                 try:
-                    data = json_repair.loads(json_str)
+                    repair_result = json_repair.loads(json_str)
+                    # json_repair.loads 可能返回多种类型，需要验证
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
                 except Exception:
                     # 再回退：截取首个 JSON 片段 [] 或 {}
                     start_arr, end_arr = json_str.find("["), json_str.rfind("]")
                     start_obj, end_obj = json_str.find("{"), json_str.rfind("}")
                     segment = None
-                    if start_arr != -1 and end_arr != -1 and end_arr > start_arr:
+                    if start_arr != -1 and end_arr != -1 and end_arr > start_obj:
                         segment = json_str[start_arr : end_arr + 1]
                     elif start_obj != -1 and end_obj != -1 and end_obj > start_obj:
                         segment = json_str[start_obj : end_obj + 1]
                     if segment is None:
                         raise
-                    data = json_repair.loads(segment)
+                    repair_result = json_repair.loads(segment)
+                    if isinstance(repair_result, (list, dict)):
+                        data = repair_result  # type: ignore
+                    else:
+                        raise TypeError(f"json_repair返回了非预期类型: {type(repair_result)}")
 
             # 统一为列表
             if isinstance(data, dict):
@@ -651,23 +699,35 @@ class LongTermMemoryManager:
         try:
             success_count = 0
             temp_id_map: dict[str, str] = {}
+            active_memory_id: str | None = None
 
             for op in operations:
                 try:
                     if op.operation_type == GraphOperationType.CREATE_MEMORY:
                         await self._execute_create_memory(op, source_stm, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_MEMORY:
                         await self._execute_update_memory(op, temp_id_map)
+                        active_memory_id = self._resolve_id(op.target_id, temp_id_map)
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.MERGE_MEMORIES:
                         await self._execute_merge_memories(op, source_stm, temp_id_map)
+                        # 获取合并后的目标记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        source_ids = params.get("source_memory_ids", [])
+                        if source_ids:
+                            active_memory_id = source_ids[0]
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_NODE:
                         await self._execute_create_node(op, temp_id_map)
+                        # 更新当前上下文记忆ID
+                        params = self._resolve_parameters(op.parameters, temp_id_map)
+                        if params.get("memory_id"):
+                            active_memory_id = params.get("memory_id")
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_NODE:
@@ -679,7 +739,9 @@ class LongTermMemoryManager:
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.CREATE_EDGE:
-                        await self._execute_create_edge(op, temp_id_map)
+                        await self._execute_create_edge(
+                            op, temp_id_map, default_memory_id=active_memory_id
+                        )
                         success_count += 1
 
                     elif op.operation_type == GraphOperationType.UPDATE_EDGE:
@@ -803,7 +865,7 @@ class LongTermMemoryManager:
             memory.metadata["transferred_from_stm"] = source_stm.id
             memory.metadata["transfer_time"] = datetime.now().isoformat()
 
-            logger.info(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
+            logger.debug(f"创建长期记忆: {memory.id} (来自短期记忆 {source_stm.id})")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             # 这样即使 LLM 使用了中文描述作为 ID (如 "新创建的记忆"), 也能正确映射
             self._register_temp_id(op.target_id, memory.id, temp_id_map, force=True)
@@ -836,7 +898,7 @@ class LongTermMemoryManager:
         success = await self.memory_manager.update_memory(memory_id, **updates)
 
         if success:
-            logger.info(f"更新长期记忆: {memory_id}")
+            logger.debug(f"更新长期记忆: {memory_id}")
         else:
             logger.error(f"更新长期记忆失败: {memory_id}")
 
@@ -862,10 +924,20 @@ class LongTermMemoryManager:
         # 待合并记忆（将被删除的）
         memories_to_merge = source_ids[1:]
 
-        logger.info(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
+        if not memories_to_merge:
+            logger.debug(f"合并操作未指定源记忆，跳过实际合并: target={target_id}")
+            # 即使没有要合并的记忆，也可能需要更新元数据（例如 merged_content）
+            # 所以继续执行，但 merge_memories 调用会是空的
+        else:
+            logger.debug(f"开始智能合并记忆: {memories_to_merge} -> {target_id}")
 
         # 1. 调用 GraphStore 的合并功能（转移节点和边）
-        merge_success = self.memory_manager.graph_store.merge_memories(target_id, memories_to_merge)
+        # 使用 to_thread 防止同步操作阻塞事件循环
+        merge_success = await asyncio.to_thread(
+            self.memory_manager.graph_store.merge_memories,
+            target_id,
+            memories_to_merge
+        )
 
         if merge_success:
             # 2. 更新目标记忆的元数据
@@ -884,7 +956,11 @@ class LongTermMemoryManager:
             asyncio.create_task(  # noqa: RUF006
                 self.memory_manager._async_save_graph_store("合并记忆")
             )
-            logger.info(f"合并记忆完成: {source_ids} -> {target_id}")
+
+            # 4. 注册临时ID（如果存在），以便后续操作引用
+            self._register_temp_id(op.target_id, target_id, temp_id_map, force=True)
+
+            logger.debug(f"合并记忆完成: {source_ids} -> {target_id}")
         else:
             logger.error(f"合并记忆失败: {source_ids}")
 
@@ -915,7 +991,7 @@ class LongTermMemoryManager:
         if success:
             # 将embedding生成加入队列，批量处理
             await self._queue_embedding_generation(node_id, content)
-            logger.info(f"创建节点: {content} ({node_type}) -> {memory_id}")
+            logger.debug(f"创建节点: {content} ({node_type}) -> {memory_id}")
             # 强制注册 target_id，无论它是否符合 placeholder 格式
             self._register_temp_id(op.target_id, node_id, temp_id_map, force=True)
             self._register_aliases_from_params(
@@ -946,7 +1022,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新节点: {node_id}")
+            logger.debug(f"更新节点: {node_id}")
         else:
             logger.error(f"更新节点失败: {node_id}")
 
@@ -973,10 +1049,13 @@ class LongTermMemoryManager:
         for source_id in sources:
             self.memory_manager.graph_store.merge_nodes(source_id, target_id)
 
-        logger.info(f"合并节点: {sources} -> {target_id}")
+        logger.debug(f"合并节点: {sources} -> {target_id}")
 
     async def _execute_create_edge(
-        self, op: GraphOperation, temp_id_map: dict[str, str]
+        self,
+        op: GraphOperation,
+        temp_id_map: dict[str, str],
+        default_memory_id: str | None = None,
     ) -> None:
         """执行创建边操作"""
         params = self._resolve_parameters(op.parameters, temp_id_map)
@@ -994,23 +1073,56 @@ class LongTermMemoryManager:
             logger.warning("创建边失败: 图存储未初始化")
             return
 
+        # 辅助函数：推断 memory_id
+        def _infer_memory_id(existing_node_id: str) -> str | None:
+            memories = self.memory_manager.graph_store.get_memories_by_node(existing_node_id)
+            if memories:
+                return memories[0].id
+            return None
+
         # 检查和创建节点（如果不存在则创建占位符）
         if not self.memory_manager.graph_store.graph.has_node(source_id):
-            logger.debug(f"源节点不存在，创建占位符节点: {source_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(target_id):
+                memory_id = _infer_memory_id(target_id)
+
+            if not memory_id:
+                logger.warning(f"源节点不存在且无法推断 memory_id，跳过创建: {source_id}")
+                return
+
+            logger.debug(f"源节点不存在，创建占位符节点: {source_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=source_id,
                 node_type="event",
                 content=f"临时节点 - {source_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         if not self.memory_manager.graph_store.graph.has_node(target_id):
-            logger.debug(f"目标节点不存在，创建占位符节点: {target_id}")
+            # 尝试推断 memory_id
+            memory_id = default_memory_id
+            if not memory_id and self.memory_manager.graph_store.graph.has_node(source_id):
+                memory_id = _infer_memory_id(source_id)
+
+            if not memory_id:
+                logger.warning(f"目标节点不存在且无法推断 memory_id，跳过创建: {target_id}")
+                return
+
+            logger.debug(f"目标节点不存在，创建占位符节点: {target_id} (memory_id={memory_id})")
             self.memory_manager.graph_store.add_node(
                 node_id=target_id,
                 node_type="event",
                 content=f"临时节点 - {target_id}",
-                metadata={"placeholder": True, "created_by": "long_term_manager_edge_creation"}
+                memory_id=memory_id,
+                metadata={
+                    "placeholder": True,
+                    "created_by": "long_term_manager_edge_creation",
+                },
             )
 
         # 现在两个节点都存在，可以创建边
@@ -1024,7 +1136,7 @@ class LongTermMemoryManager:
         )
 
         if edge_id:
-            logger.info(f"创建边: {source_id} -> {target_id} ({relation})")
+            logger.debug(f"创建边: {source_id} -> {target_id} ({relation})")
         else:
             logger.error(f"创建边失败: {op}")
 
@@ -1048,7 +1160,7 @@ class LongTermMemoryManager:
         )
 
         if success:
-            logger.info(f"更新边: {edge_id}")
+            logger.debug(f"更新边: {edge_id}")
         else:
             logger.error(f"更新边失败: {edge_id}")
 
@@ -1065,12 +1177,17 @@ class LongTermMemoryManager:
         success = self.memory_manager.graph_store.remove_edge(edge_id)
 
         if success:
-            logger.info(f"删除边: {edge_id}")
+            logger.debug(f"删除边: {edge_id}")
         else:
             logger.error(f"删除边失败: {edge_id}")
 
     async def _queue_embedding_generation(self, node_id: str, content: str) -> None:
         """将节点加入embedding生成队列"""
+        # 检查是否已经失败过多次
+        if node_id in self._failed_embedding_nodes:
+            logger.debug(f"节点 {node_id} 已标记为失败，跳过embedding生成")
+            return
+
         # 先在锁内写入，再在锁外触发批量处理，避免自锁
         should_flush = False
         async with self._embedding_lock:
@@ -1081,10 +1198,22 @@ class LongTermMemoryManager:
         if should_flush:
             await self._flush_pending_embeddings()
 
+    def _in_embedding_cooldown(self) -> bool:
+        """检测embedding生成是否处于冷却期，避免在持续失败时忙等重试"""
+        return self._embedding_cooldown_until is not None and datetime.now().timestamp() < self._embedding_cooldown_until
+
+    def _enter_embedding_cooldown(self) -> None:
+        """记录冷却截止时间，下一轮重试前等待一段时间"""
+        self._embedding_cooldown_until = datetime.now().timestamp() + self._embedding_cooldown_seconds
+
     async def _flush_pending_embeddings(self) -> None:
         """批量处理待生成的embeddings"""
         async with self._embedding_lock:
             if not self._pending_embeddings:
+                return
+
+            if self._in_embedding_cooldown():
+                logger.debug("跳过embedding生成，等待冷却结束后再试")
                 return
 
             batch = self._pending_embeddings[:]
@@ -1093,57 +1222,93 @@ class LongTermMemoryManager:
         if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
             return
 
-        try:
-            # 批量生成embeddings
-            contents = [content for _, content in batch]
-            embeddings = await self.memory_manager.embedding_generator.generate_batch(contents)
+        contents = [content for _, content in batch]
 
-            if not embeddings or len(embeddings) != len(batch):
-                logger.warning("批量生成embedding失败或数量不匹配")
-                # 回退到单个生成
-                for node_id, content in batch:
-                    await self._generate_node_embedding_single(node_id, content)
+        for attempt in range(1, self._embedding_batch_retry_limit + 1):
+            try:
+                embeddings = await self.memory_manager.embedding_generator.generate_batch(contents)
+
+                if not embeddings or len(embeddings) != len(batch):
+                    raise RuntimeError(
+                        f"批量生成embedding失败或数量不匹配 (期望{len(batch)}, 实际{len(embeddings) if embeddings else 0})"
+                    )
+
+                from src.memory_graph.models import MemoryNode, NodeType
+                nodes = [
+                    MemoryNode(
+                        id=node_id,
+                        content=content,
+                        node_type=NodeType.OBJECT,
+                        embedding=embedding
+                    )
+                    for (node_id, content), embedding in zip(batch, embeddings)
+                    if embedding is not None
+                ]
+
+                if nodes:
+                    await self.memory_manager.vector_store.add_nodes_batch(nodes)
+
+                    for node in nodes:
+                        node.mark_vector_stored()
+                        if self.memory_manager.graph_store.graph.has_node(node.id):
+                            self.memory_manager.graph_store.graph.nodes[node.id]["has_vector"] = True
+
+                    logger.debug(f"批量生成 {len(nodes)} 个节点的embedding")
+
+                self._embedding_consecutive_failures = 0
+                self._embedding_cooldown_until = None
                 return
 
-            # 批量添加到向量库
-            from src.memory_graph.models import MemoryNode, NodeType
-            nodes = [
-                MemoryNode(
-                    id=node_id,
-                    content=content,
-                    node_type=NodeType.OBJECT,
-                    embedding=embedding
+            except Exception as e:
+                self._embedding_failure_attempts += 1
+                self._embedding_consecutive_failures += 1
+                if attempt < self._embedding_batch_retry_limit:
+                    backoff = self._retry_backoff * attempt
+                    logger.warning(
+                        f"批量生成embedding失败，重试 {attempt}/{self._embedding_batch_retry_limit}，等待 {backoff}s: {e}"
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
+                logger.error(f"批量生成embedding失败且达到重试上限: {e}")
+
+        failed_nodes: list[str] = []
+        for node_id, content in batch:
+            success = await self._generate_node_embedding_single(node_id, content)
+            if not success:
+                failed_nodes.append(node_id)
+
+        if failed_nodes:
+            self._embedding_failed_count += len(failed_nodes)
+            self._failed_embedding_nodes.update(failed_nodes)
+            logger.warning(f"单个生成embedding失败，已标记节点不再重试: {failed_nodes}")
+
+            if self._embedding_consecutive_failures >= self._embedding_failure_threshold:
+                self._enter_embedding_cooldown()
+                logger.warning(
+                    f"embedding生成连续失败 {self._embedding_consecutive_failures} 次，进入 {self._embedding_cooldown_seconds}s 冷却期"
                 )
-                for (node_id, content), embedding in zip(batch, embeddings)
-                if embedding is not None
-            ]
+            return
 
-            if nodes:
-                # 批量添加节点
-                await self.memory_manager.vector_store.add_nodes_batch(nodes)
+        # 单个生成成功则重置失败累积
+        self._embedding_consecutive_failures = 0
+        self._embedding_cooldown_until = None
 
-                # 批量更新图存储
-                for node in nodes:
-                    node.mark_vector_stored()
-                    if self.memory_manager.graph_store.graph.has_node(node.id):
-                        self.memory_manager.graph_store.graph.nodes[node.id]["has_vector"] = True
+    async def _generate_node_embedding_single(self, node_id: str, content: str) -> bool:
+        """为单个节点生成 embedding 并存入向量库（有限重试），返回是否成功"""
+        if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
+            return False
 
-                logger.debug(f"批量生成 {len(nodes)} 个节点的embedding")
+        if node_id in self._failed_embedding_nodes:
+            logger.debug(f"节点 {node_id} 已标记为失败，跳过单个生成")
+            return False
 
-        except Exception as e:
-            logger.error(f"批量生成embedding失败: {e}")
-            # 回退到单个生成
-            for node_id, content in batch:
-                await self._generate_node_embedding_single(node_id, content)
+        for attempt in range(1, self._embedding_single_retry_limit + 1):
+            try:
+                embedding = await self.memory_manager.embedding_generator.generate(content)
+                if embedding is None:
+                    raise RuntimeError("单次生成返回None")
 
-    async def _generate_node_embedding_single(self, node_id: str, content: str) -> None:
-        """为单个节点生成 embedding 并存入向量库（回退方法）"""
-        try:
-            if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
-                return
-
-            embedding = await self.memory_manager.embedding_generator.generate(content)
-            if embedding is not None:
                 from src.memory_graph.models import MemoryNode, NodeType
                 node = MemoryNode(
                     id=node_id,
@@ -1155,8 +1320,25 @@ class LongTermMemoryManager:
                 node.mark_vector_stored()
                 if self.memory_manager.graph_store.graph.has_node(node_id):
                     self.memory_manager.graph_store.graph.nodes[node_id]["has_vector"] = True
-        except Exception as e:
-            logger.warning(f"生成节点 embedding 失败: {e}")
+                logger.debug(f"单个生成节点 {node_id} 的embedding成功")
+
+                self._embedding_consecutive_failures = 0
+                self._embedding_cooldown_until = None
+                return True
+
+            except Exception as e:
+                self._embedding_failure_attempts += 1
+                self._embedding_consecutive_failures += 1
+                if attempt < self._embedding_single_retry_limit:
+                    backoff = self._retry_backoff * attempt
+                    logger.warning(
+                        f"生成节点 {node_id} embedding 失败，重试 {attempt}/{self._embedding_single_retry_limit}，等待 {backoff}s: {e}"
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
+                logger.warning(f"节点 {node_id} embedding 失败且达到重试上限: {e}")
+                return False
 
     async def apply_long_term_decay(self) -> dict[str, Any]:
         """
@@ -1223,7 +1405,7 @@ class LongTermMemoryManager:
                     self.memory_manager.graph_store
                 )
 
-            logger.info(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
+            logger.debug(f"长期记忆衰减完成: {decayed_count} 条记忆已更新")
             return {"decayed_count": decayed_count, "total_memories": len(all_memories)}
 
         except Exception as e:
@@ -1238,6 +1420,14 @@ class LongTermMemoryManager:
         stats = self.memory_manager.get_statistics()
         stats["decay_factor"] = self.long_term_decay_factor
         stats["batch_size"] = self.batch_size
+        stats["embedding_stats"] = {
+            "failed_count": self._embedding_failed_count,
+            "failed_nodes": len(self._failed_embedding_nodes),
+            "pending_count": len(self._pending_embeddings),
+            "failure_attempts": self._embedding_failure_attempts,
+            "consecutive_failures": self._embedding_consecutive_failures,
+            "cooldown_until": self._embedding_cooldown_until,
+        }
 
         return stats
 
@@ -1248,6 +1438,14 @@ class LongTermMemoryManager:
 
         try:
             logger.info("正在关闭长期记忆管理器...")
+
+            # 输出embedding统计信息
+            if self._embedding_failed_count > 0:
+                logger.warning(
+                    f"Embedding生成统计: 失败次数={self._embedding_failed_count}, "
+                    f"失败节点数={len(self._failed_embedding_nodes)}, "
+                    f"待处理数={len(self._pending_embeddings)}"
+                )
 
             # 清空待处理的embedding队列
             await self._flush_pending_embeddings()
