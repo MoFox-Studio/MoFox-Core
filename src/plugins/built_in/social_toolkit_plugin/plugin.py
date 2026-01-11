@@ -299,6 +299,14 @@ class SetEmojiLikeAction(BaseAction):
             await self.store_action_info(action_prompt_display="贴表情失败: 未提供消息ID", action_done=False)
             return False, "未提供消息ID"
 
+        # 校验 message_id 是否为有效数字（过滤 "notice" 等非消息 ID）
+        if not str(message_id).isdigit():
+            logger.warning(f"消息ID '{message_id}' 无效，无法执行贴表情动作。该动作不支持通知类事件。")
+            await self.store_action_info(
+                action_prompt_display=f"贴表情失败: 消息ID '{message_id}' 无效", action_done=False
+            )
+            return False, f"消息ID '{message_id}' 无效"
+
         available_models = llm_api.get_available_models()
         if "utils_small" not in available_models:
             logger.error("未找到 'utils_small' 模型配置，无法选择表情")
