@@ -404,7 +404,8 @@ class MemoryManager:
             记忆列表
         """
         if not self._initialized:
-            await self.initialize()
+            logger.debug("记忆管理器尚未初始化完成，跳过搜索以避免初始化期间的重复查询")
+            return []
 
         try:
             # 使用配置的默认值
