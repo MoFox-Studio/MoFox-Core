@@ -491,8 +491,10 @@ class SendHandler:
             emoji_id = int(args["emoji_id"])
             set_like = bool(args["set"])
         except (KeyError, ValueError) as e:
-            logger.error(f"处理表情回应命令时发生错误: {e}, 原始参数: {args}")
-            raise ValueError(f"缺少必需参数或参数类型错误: {e}")
+            error_msg = f"缺少必需参数或参数类型错误: {e}, 原始参数: {args}"
+            logger.error(f"处理表情回应命令时发生错误: {error_msg}")
+            # 不再向上抛出异常，而是返回 None 让调用方处理
+            return "", {}
 
         return (
             CommandType.SET_EMOJI_LIKE.value,
