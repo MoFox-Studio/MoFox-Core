@@ -126,6 +126,22 @@ class EULAManager:
     """EULA管理类"""
 
     @staticmethod
+    def _show_branch_warning():
+        """显示分支警告信息"""
+        warn_logger = get_logger("branch_warning")
+        warn_logger.warning("=" * 70)
+        warn_logger.warning("⚠️  重要提示：您正在运行 dev 分支")
+        warn_logger.warning("=" * 70)
+        warn_logger.warning("当前 dev 分支正在进行重构，可能存在以下问题：")
+        warn_logger.warning("  • 功能不完整或不稳定")
+        warn_logger.warning("  • 可能出现 Bug 或运行异常")
+        warn_logger.warning("  • 无法保证正常使用")
+        warn_logger.warning("")
+        warn_logger.warning("建议：请切换到 classical 分支以获得稳定版本")
+        warn_logger.warning("  git checkout classical")
+        warn_logger.warning("=" * 70)
+
+    @staticmethod
     async def check_eula():
         """检查EULA和隐私条款确认状态"""
         confirm_logger = get_logger("confirm")
@@ -139,6 +155,8 @@ class EULAManager:
         eula_confirmed = os.getenv("EULA_CONFIRMED", "").lower()
         if eula_confirmed == "true":
             logger.debug("EULA已通过环境变量确认")
+            # 分支警告提示
+            self._show_branch_warning()
             return
 
         # 提示用户确认EULA
@@ -163,6 +181,8 @@ class EULAManager:
                 eula_confirmed = os.getenv("EULA_CONFIRMED", "").lower()
                 if eula_confirmed == "true":
                     confirm_logger.info("EULA确认成功，感谢您的同意")
+                    # 分支警告提示
+                    self._show_branch_warning()
                     return
 
                 if attempts % 5 == 0:
