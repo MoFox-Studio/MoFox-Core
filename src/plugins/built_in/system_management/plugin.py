@@ -48,22 +48,9 @@ class SystemCommand(PlusCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    @require_permission("access", deny_message="❌ 你没有查看定时任务的权限")
     async def execute(self, args: CommandArgs) -> tuple[bool, str | None, bool]:
         """执行系统管理命令"""
-        if not self.chat_stream.user_info:
-            logger.error("chat_stream缺失用户信息,请报告开发者")
-            return False, "chat_stream缺失用户信息,请报告开发者", True
-        has_permission = await permission_api.check_permission(
-            platform=self.chat_stream.platform,
-            user_id=self.chat_stream.user_info.user_id,
-            permission_node="access",
-        ) or permission_api.is_master(
-            self.chat_stream.platform,
-            self.chat_stream.user_info.user_id,
-        )
-        if not has_permission:
-            logger.warning("没有权限使用此命令")
-            return False, "没有权限使用此命令", True
         if args.is_empty:
             await self._show_help("all")
             return True, "显示帮助信息", True
