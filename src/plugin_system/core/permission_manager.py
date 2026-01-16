@@ -81,9 +81,22 @@ class PermissionManager(IPermissionManager):
             bool: 是否为Master用户
         """
         user_tuple = (user.platform, user.user_id)
+        
+        logger.debug(
+            f"[PermissionManager.is_master] 检查用户 {user.platform}:{user.user_id} | "
+            f"当前Master用户列表: {self._master_users}"
+        )
+        
         is_master_flag = user_tuple in self._master_users
+        
         if is_master_flag:
-            logger.debug(f"用户 {user.platform}:{user.user_id} 是Master用户")
+            logger.info(f"[PermissionManager.is_master] ✓ 用户 {user.platform}:{user.user_id} 是Master用户")
+        else:
+            logger.debug(
+                f"[PermissionManager.is_master] ✗ 用户 {user.platform}:{user.user_id} 不是Master用户 | "
+                f"用户元组: {user_tuple} 不在Master列表中"
+            )
+        
         return is_master_flag
 
     async def check_permission(self, user: UserInfo, permission_node: str) -> bool:

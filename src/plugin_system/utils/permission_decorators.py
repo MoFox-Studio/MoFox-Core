@@ -112,9 +112,24 @@ def require_permission(permission_node: str, deny_message: str | None = None, *,
                     return False, "无法获取用户信息", True
                 return None
 
+            # 记录权限检查开始
+            logger.info(
+                f"[权限检查] 开始检查权限 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id} | 权限节点: {full_permission_node}"
+            )
+
             has_permission = await permission_api.check_permission(
                 chat_stream.platform, chat_stream.user_info.user_id, full_permission_node
             )
+
+            # 记录权限检查结果
+            if has_permission:
+                logger.info(
+                    f"[权限检查] ✓ 权限验证通过 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id} | 权限节点: {full_permission_node}"
+                )
+            else:
+                logger.warning(
+                    f"[权限检查] ✗ 权限验证失败 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id} | 权限节点: {full_permission_node} | 原因: 用户无此权限"
+                )
 
             if not has_permission:
                 # 对于PlusCommand的execute方法，需要返回适当的元组
@@ -191,7 +206,22 @@ def require_master(deny_message: str | None = None):
                     return False, "无法获取用户信息", True
                 return None
 
+            # 记录Master检查开始
+            logger.info(
+                f"[Master检查] 开始检查Master权限 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id}"
+            )
+
             is_master = await permission_api.is_master(chat_stream.platform, chat_stream.user_info.user_id)
+
+            # 记录Master检查结果
+            if is_master:
+                logger.info(
+                    f"[Master检查] ✓ Master验证通过 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id}"
+                )
+            else:
+                logger.warning(
+                    f"[Master检查] ✗ Master验证失败 | 函数: {func.__name__} | 用户: {chat_stream.platform}:{chat_stream.user_info.user_id} | 原因: 用户不是Master"
+                )
 
             if not is_master:
                 if func.__name__ == "execute" and hasattr(args[0], "send_text"):
@@ -239,8 +269,20 @@ class PermissionChecker:
             bool: 是否为Master用户
         """
         if not chat_stream.user_info or not chat_stream.user_info.user_id:
+            logger.debug("[PermissionChecker.is_master] 用户信息缺失，返回False")
             return False
-        return await permission_api.is_master(chat_stream.platform, chat_stream.user_info.user_id)
+        
+        logger.debug(
+            f"[PermissionChecker.is_master] 检查用户 {chat_stream.platform}:{chat_stream.user_info.user_id}"
+        )
+        
+        is_master = await permission_api.is_master(chat_stream.platform, chat_stream.user_info.user_id)
+        
+        logger.debug(
+            f"[PermissionChecker.is_master] 用户 {chat_stream.platform}:{chat_stream.user_info.user_id} Master检查结果: {is_master}"
+        )
+        
+        return is_master
 
     @staticmethod
     async def ensure_permission(chat_stream: ChatStream, permission_node: str, deny_message: str | None = None) -> bool:
@@ -256,9 +298,19 @@ class PermissionChecker:
             bool: 是否拥有权限
         """
         if not chat_stream.user_info or not chat_stream.user_info.user_id:
+            logger.debug("[PermissionChecker.ensure_permission] 用户信息缺失，返回False")
             return False
+        
+        logger.debug(
+            f"[PermissionChecker.ensure_permission] 检查用户 {chat_stream.platform}:{chat_stream.user_info.user_id} 权限节点: {permission_node}"
+        )
+        
         has_permission = await permission_api.check_permission(
             chat_stream.platform, chat_stream.user_info.user_id, permission_node
+        )
+        
+        logger.debug(
+            f"[PermissionChecker.ensure_permission] 用户 {chat_stream.platform}:{chat_stream.user_info.user_id} 权限节点: {permission_node} 检查结果: {has_permission}"
         )
 
         return has_permission
@@ -275,6 +327,14 @@ class PermissionChecker:
         Returns:
             bool: 是否为Master用户
         """
+        logger.debug(
+            f"[PermissionChecker.ensure_master] 开始检查用户 {chat_stream.platform if chat_stream.user_info else 'unknown'}:{chat_stream.user_info.user_id if chat_stream.user_info else 'unknown'}"
+        )
+        
         is_master = await PermissionChecker.is_master(chat_stream)
+        
+        logger.debug(
+            f"[PermissionChecker.ensure_master] 用户 {chat_stream.platform if chat_stream.user_info else 'unknown'}:{chat_stream.user_info.user_id if chat_stream.user_info else 'unknown'} Master检查结果: {is_master}"
+        )
 
         return is_master

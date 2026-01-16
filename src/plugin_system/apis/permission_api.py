@@ -270,8 +270,31 @@ class PermissionAPI:
         """
         self._ensure_manager()
         if not self._permission_manager:
+            logger.warning(
+                f"[permission_api.check_permission] 权限管理器未设置，返回False | "
+                f"用户: {platform}:{user_id} | 权限节点: {permission_node}"
+            )
             return False
-        return await self._permission_manager.check_permission(UserInfo(platform, user_id), permission_node)
+        
+        logger.debug(
+            f"[permission_api.check_permission] 开始检查权限 | "
+            f"用户: {platform}:{user_id} | 权限节点: {permission_node}"
+        )
+        
+        has_permission = await self._permission_manager.check_permission(UserInfo(platform, user_id), permission_node)
+        
+        if has_permission:
+            logger.info(
+                f"[permission_api.check_permission] ✓ 权限检查通过 | "
+                f"用户: {platform}:{user_id} | 权限节点: {permission_node}"
+            )
+        else:
+            logger.debug(
+                f"[permission_api.check_permission] ✗ 权限检查失败 | "
+                f"用户: {platform}:{user_id} | 权限节点: {permission_node}"
+            )
+        
+        return has_permission
 
     async def is_master(self, platform: str, user_id: str) -> bool:
         """
@@ -288,8 +311,19 @@ class PermissionAPI:
         """
         self._ensure_manager()
         if not self._permission_manager:
+            logger.warning(f"[permission_api.is_master] 权限管理器未设置，返回False | 用户: {platform}:{user_id}")
             return False
-        return await self._permission_manager.is_master(UserInfo(platform, user_id))
+        
+        logger.debug(f"[permission_api.is_master] 开始检查Master权限 | 用户: {platform}:{user_id}")
+        
+        is_master = await self._permission_manager.is_master(UserInfo(platform, user_id))
+        
+        if is_master:
+            logger.info(f"[permission_api.is_master] ✓ 用户是Master | 用户: {platform}:{user_id}")
+        else:
+            logger.debug(f"[permission_api.is_master] ✗ 用户不是Master | 用户: {platform}:{user_id}")
+        
+        return is_master
 
     async def register_permission_node(
         self,
