@@ -78,7 +78,7 @@ class ConfigManager:
                     logger.error(f"创建.env文件失败: {e}")
                     sys.exit(1)
             else:
-                logger.error("未找到.env文件和template.env模板文件")
+                logger.error("未找到.env文件和template.env模板文件！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！")
                 sys.exit(1)
 
     @staticmethod
