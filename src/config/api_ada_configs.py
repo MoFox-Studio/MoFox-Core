@@ -175,6 +175,26 @@ class ModelTaskConfig(ValidatedConfigBase):
         raise ValueError(f"任务 '{task_name}' 未找到对应的配置")
 
 
+class ModelSelectorConfig(ValidatedConfigBase):
+    """模型选择器配置类"""
+
+    critical_penalty_multiplier: float = Field(
+        default=5.0, ge=0, description="严重错误惩罚乘数（网络错误、服务器错误等）"
+    )
+    default_penalty_increment: float = Field(
+        default=1.0, ge=0, description="默认惩罚增量（普通错误）"
+    )
+    latency_weight: float = Field(
+        default=200.0, ge=0, description="延迟权重（延迟在负载均衡中的影响权重）"
+    )
+    penalty_weight: float = Field(
+        default=300.0, ge=0, description="失败惩罚权重（失败次数在负载均衡中的影响权重）"
+    )
+    usage_penalty_weight: float = Field(
+        default=1000.0, ge=0, description="使用惩罚权重（短期使用频率在负载均衡中的影响权重）"
+    )
+
+
 class APIAdapterConfig(ValidatedConfigBase):
     """API Adapter配置类"""
 
@@ -182,6 +202,9 @@ class APIAdapterConfig(ValidatedConfigBase):
     models: list[ModelInfo] = Field(..., min_length=1, description="模型列表")
     model_task_config: ModelTaskConfig = Field(..., description="模型任务配置")
     api_providers: list[APIProvider] = Field(..., min_length=1, description="API提供商列表")
+    model_selector: ModelSelectorConfig = Field(
+        default_factory=ModelSelectorConfig, description="模型选择器配置"
+    )
 
     _api_providers_dict: dict[str, APIProvider] = PrivateAttr(default_factory=dict)
     _models_dict: dict[str, ModelInfo] = PrivateAttr(default_factory=dict)

@@ -55,6 +55,7 @@ from src.config.official_configs import (
 from .api_ada_configs import (
     APIProvider,
     ModelInfo,
+    ModelSelectorConfig,
     ModelTaskConfig,
 )
 
@@ -809,6 +810,9 @@ class APIAdapterConfig(ValidatedConfigBase):
     models: list[ModelInfo] = Field(..., min_length=1, description="模型列表")
     model_task_config: ModelTaskConfig = Field(..., description="模型任务配置")
     api_providers: list[APIProvider] = Field(..., min_length=1, description="API提供商列表")
+    model_selector: ModelSelectorConfig = Field(
+        default_factory=ModelSelectorConfig, description="模型选择器配置"
+    )
 
     _api_providers_dict: dict[str, APIProvider] = PrivateAttr(default_factory=dict)
     _models_dict: dict[str, ModelInfo] = PrivateAttr(default_factory=dict)

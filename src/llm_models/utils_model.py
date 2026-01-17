@@ -145,10 +145,6 @@ ModelUsageStats = namedtuple(  # noqa: PYI024
 class _ModelSelector:
     """负责模型选择、负载均衡和动态故障切换的策略。"""
 
-    CRITICAL_PENALTY_MULTIPLIER = 5  # 严重错误惩罚乘数
-    DEFAULT_PENALTY_INCREMENT = 1  # 默认惩罚增量
-    LATENCY_WEIGHT = 200  # 延迟权重
-
     def __init__(self, model_list: list[str], model_usage: dict[str, ModelUsageStats]):
         """
         初始化模型选择器。
@@ -159,6 +155,14 @@ class _ModelSelector:
         """
         self.model_list = model_list
         self.model_usage = model_usage
+
+        # 从配置文件加载倍率参数
+        selector_config = model_config.model_selector
+        self.CRITICAL_PENALTY_MULTIPLIER = selector_config.critical_penalty_multiplier if selector_config else 5.0
+        self.DEFAULT_PENALTY_INCREMENT = selector_config.default_penalty_increment if selector_config else 1.0
+        self.LATENCY_WEIGHT = selector_config.latency_weight if selector_config else 200.0
+        self.PENALTY_WEIGHT = selector_config.penalty_weight if selector_config else 300.0
+        self.USAGE_PENALTY_WEIGHT = selector_config.usage_penalty_weight if selector_config else 1000.0
 
     async def select_best_available_model(
         self, failed_models_in_this_request: set, request_type: str
@@ -184,17 +188,17 @@ class _ModelSelector:
             return None
 
         # 核心负载均衡算法：选择一个综合得分最低的模型。
-        # 公式: total_tokens + penalty * 300 + usage_penalty * 1000 + avg_latency * 200
+        # 公式: total_tokens + penalty * PENALTY_WEIGHT + usage_penalty * USAGE_PENALTY_WEIGHT + avg_latency * LATENCY_WEIGHT
         # 设计思路:
         # - `total_tokens`: 基础成本，优先使用累计token少的模型，实现长期均衡。
-        # - `penalty * 300`: 失败惩罚项。每次失败会增加penalty，使其在短期内被选中的概率降低。权重300意味着一次失败大致相当于300个token的成本。
-        # - `usage_penalty * 1000`: 短期使用惩罚项。每次被选中后会增加，完成后会减少。高权重确保在多个模型都健康的情况下，请求会均匀分布（轮询）。
-        # - `avg_latency * 200`: 延迟惩罚项。优先选择平均响应时间更快的模型。权重200意味着1秒的延迟约等于200个token的成本。
+        # - `penalty * PENALTY_WEIGHT`: 失败惩罚项。每次失败会增加penalty，使其在短期内被选中的概率降低。
+        # - `usage_penalty * USAGE_PENALTY_WEIGHT`: 短期使用惩罚项。每次被选中后会增加，完成后会减少。高权重确保在多个模型都健康的情况下，请求会均匀分布（轮询）。
+        # - `avg_latency * LATENCY_WEIGHT`: 延迟惩罚项。优先选择平均响应时间更快的模型。
         least_used_model_name = min(
             candidate_models_usage,
             key=lambda k: candidate_models_usage[k].total_tokens
-            + candidate_models_usage[k].penalty * 300
-            + candidate_models_usage[k].usage_penalty * 1000
+            + candidate_models_usage[k].penalty * self.PENALTY_WEIGHT
+            + candidate_models_usage[k].usage_penalty * self.USAGE_PENALTY_WEIGHT
             + candidate_models_usage[k].avg_latency * self.LATENCY_WEIGHT,
         )
 
