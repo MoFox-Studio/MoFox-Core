@@ -13,7 +13,7 @@ import filetype
 
 from src.common.logger import get_logger
 from src.llm_models.utils_model import LLMRequest
-from src.config.config import APIAdapterConfig
+from src.config.config import model_config as gobal_model_config
 from src.plugin_system.apis import config_api, llm_api, person_api
 
 # 导入旧的工具函数，我们稍后会考虑是否也需要重构它
@@ -50,7 +50,7 @@ class ContentService:
         """
         try:
             # 获取模型配置
-            model_config = APIAdapterConfig.model_task_config.maizone
+            model_config = gobal_model_config.model_task_config.maizone
 
             if not model_config:
                 logger.error("未配置LLM模型")
