@@ -64,10 +64,10 @@ class RespParseException(Exception):
         base_msg = self.message or "解析响应内容时发生未知错误，请检查是否配置了正确的解析方法"
         if self.ext_info:
             # 简化附加信息显示：只显示关键字段，避免冗长的完整对象
-            if hasattr(self.ext_info, 'model') and hasattr(self.ext_info, 'usage'):
+            if hasattr(self.ext_info, "model") and hasattr(self.ext_info, "usage"):
                 # ChatCompletion 对象，只显示关键信息
-                model = getattr(self.ext_info, 'model', 'unknown')
-                usage = getattr(self.ext_info, 'usage', None)
+                model = getattr(self.ext_info, "model", "unknown")
+                usage = getattr(self.ext_info, "usage", None)
                 tokens = f"tokens={usage.total_tokens}" if usage else "no usage"
                 return f"{base_msg} (model={model}, {tokens})"
             elif isinstance(self.ext_info, str) and len(self.ext_info) > 200:
