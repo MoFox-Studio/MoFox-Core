@@ -13,6 +13,7 @@ import filetype
 
 from src.common.logger import get_logger
 from src.llm_models.utils_model import LLMRequest
+from src.config.config import APIAdapterConfig
 from src.plugin_system.apis import config_api, llm_api, person_api
 
 # 导入旧的工具函数，我们稍后会考虑是否也需要重构它
@@ -49,9 +50,7 @@ class ContentService:
         """
         try:
             # 获取模型配置
-            models = llm_api.get_available_models()
-            text_model = str(self.get_config("models.text_model", "replyer"))
-            model_config = models.get(text_model)
+            model_config = APIAdapterConfig.model_task_config.maizone
 
             if not model_config:
                 logger.error("未配置LLM模型")

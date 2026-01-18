@@ -40,9 +40,6 @@ class MaiZoneRefactoredPlugin(BasePlugin):
 
     config_schema: dict = {
         "plugin": {"enable": ConfigField(type=bool, default=True, description="是否启用插件")},
-        "models": {
-            "text_model": ConfigField(type=str, default="maizone", description="生成文本的模型名称"),
-        },
         "ai_image": {
             "enable_ai_image": ConfigField(type=bool, default=False, description="是否启用AI生成配图"),
             "provider": ConfigField(type=str, default="siliconflow", description="AI生图服务提供商（siliconflow/novelai）"),
