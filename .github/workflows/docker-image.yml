@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - dev
+      - classical
     tags:
       - "v*.*.*"
       - "v*"
