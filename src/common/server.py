@@ -109,9 +109,10 @@ class Server:
 
     async def run(self):
         """启动服务器"""
-        while self._is_port_in_use(self.port):
-            logger.warning(f"端口 {self.port} 已被占用，正在尝试下一个端口...")
-            self.port += 1
+        if self._is_port_in_use(self.port):
+            error_msg = f"端口 {self.port} 已被占用，无法启动服务器。请检查是否有其他程序正在使用该端口，或修改配置文件中的端口设置。"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         logger.info(f"将在 {self.host}:{self.port} 上启动服务器")
         # 禁用 uvicorn 默认日志和访问日志
