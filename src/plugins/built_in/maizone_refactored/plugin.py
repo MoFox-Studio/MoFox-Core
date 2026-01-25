@@ -99,7 +99,7 @@ class MaiZoneRefactoredPlugin(BasePlugin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        async def _refresh_cookies(self, cookie_service):
+    async def _refresh_cookies(self, cookie_service):
         """刷新Cookie的公共方法"""
         if hasattr(cookie_service, "refresh_cookies"):
             try:
