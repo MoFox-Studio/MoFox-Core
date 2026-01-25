@@ -99,6 +99,24 @@ class MaiZoneRefactoredPlugin(BasePlugin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        async def _refresh_cookies(self, cookie_service):
+        """刷新Cookie的公共方法"""
+        if hasattr(cookie_service, "refresh_cookies"):
+            try:
+                await cookie_service.refresh_cookies(None)
+            except Exception:
+                logger.exception("执行Cookie刷新时发生异常。")
+        else:
+            for p in cookie_service.cookie_dir.glob("cookies-*.json"):
+                name = p.name
+                if name.startswith("cookies-") and name.endswith(".json"):
+                    acc = name[len("cookies-"):-len(".json")]
+                    try:
+                        await cookie_service.get_cookies(acc, None)
+                    except Exception:
+                        logger.exception(f"为 {acc} 执行Cookie刷新时出错")
+
+
     async def on_plugin_loaded(self):
         """插件加载完成后的回调，初始化服务并启动后台任务"""
         # --- 创建并注册所有服务实例 ---
