@@ -562,7 +562,7 @@ class SendHandler:
             },
         )
 
-    async def send_message_to_napcat(self, action: str, params: dict, timeout: float = 20.0) -> dict:
+    async def send_message_to_napcat(self, action: str, params: dict, timeout: float = 40.0) -> dict:
         """通过 adapter API 发送到 napcat"""
         try:
             response = await self.adapter.send_napcat_api(action, params, timeout=timeout)

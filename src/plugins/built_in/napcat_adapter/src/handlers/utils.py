@@ -236,7 +236,7 @@ async def get_image_base64(url: str) -> str:
     logger.debug(f"下载图片: {url}")
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status != 200:
                     raise Exception(f"HTTP Error: {response.status}")
                 image_bytes = await response.read()
@@ -322,7 +322,7 @@ async def get_stranger_info(
 
     try:
         response = await _call_adapter_api(
-            "get_stranger_info", {"user_id": user_id}, adapter=adapter, timeout=10.0
+            "get_stranger_info", {"user_id": user_id}, adapter=adapter, timeout=30.0
         )
     except Exception as e:
         logger.warning(f"获取陌生人信息超时或失败: {e}")
@@ -383,7 +383,7 @@ async def get_forward_message(
         response = await _call_adapter_api(
             "get_forward_msg",
             {"message_id": forward_message_id},
-            timeout=10.0,
+            timeout=30.0,
             adapter=adapter,
         )
         if response is None:

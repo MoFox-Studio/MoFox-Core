@@ -85,7 +85,7 @@ class VideoDownloader:
             async with aiohttp.ClientSession() as session:
                 # 先发送HEAD请求检查文件大小
                 try:
-                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                         if response.status != 200:
                             logger.warning(f"HEAD请求失败，状态码: {response.status}")
                         else:
