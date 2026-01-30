@@ -68,7 +68,7 @@ class MaiZoneRefactoredPlugin(BasePlugin):
             "comment_possibility": ConfigField(type=float, default=0.3, description="评论概率"),
         },
         "monitor": {
-            "enable_auto_monitor": ConfigField(type=bool, default=False, description="是否启用自动监控"),
+            "enable_auto_monitor": ConfigField(type=bool, default=True, description="是否启用自动监控"),
             "interval_minutes": ConfigField(type=int, default=10, description="监控间隔分钟数"),
             "enable_auto_reply": ConfigField(type=bool, default=False, description="是否启用自动回复自己说说的评论"),
         },
@@ -98,24 +98,6 @@ class MaiZoneRefactoredPlugin(BasePlugin):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-    async def _refresh_cookies(self, cookie_service):
-        """刷新Cookie的公共方法"""
-        if hasattr(cookie_service, "refresh_cookies"):
-            try:
-                await cookie_service.refresh_cookies(None)
-            except Exception:
-                logger.exception("执行Cookie刷新时发生异常。")
-        else:
-            for p in cookie_service.cookie_dir.glob("cookies-*.json"):
-                name = p.name
-                if name.startswith("cookies-") and name.endswith(".json"):
-                    acc = name[len("cookies-"):-len(".json")]
-                    try:
-                        await cookie_service.get_cookies(acc, None)
-                    except Exception:
-                        logger.exception(f"为 {acc} 执行Cookie刷新时出错")
-
 
     async def on_plugin_loaded(self):
         """插件加载完成后的回调，初始化服务并启动后台任务"""
