@@ -7,16 +7,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
     # 核心脚本：逻辑判断并启动
-    entrypoint: >
-      sh -c "
-      if [ ! -d './plugins/webui_backend' ]; then
-        echo '🚀 检测到 WebUI 未安装，正在自动克隆...'
-        git clone -b webui-dist https://github.com/MoFox-Studio/MoFox-Core-Webui.git ./plugins/webui_backend
-      else
-        echo '✅ WebUI 已存在，准备启动...'
-      fi
-      exec uv run bot.py
-      "
+    entrypoint: ["sh", "-c", "if [ ! -d 'plugins/webui_backend' ]; then git clone -b webui-dist https://github.com/MoFox-Studio/MoFox-Core-Webui.git plugins/webui_backend; fi; exec uv run bot.py"]
     volumes:
       - ./.env:/app/.env
       - ./config:/app/config
