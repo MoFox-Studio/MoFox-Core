@@ -18,7 +18,7 @@ class LogBroadcaster:
     def __init__(self, max_buffer_size: int = 1000):
         """
         初始化日志广播器
-        
+
         Args:
             max_buffer_size: 缓冲区最大大小,超过后会丢弃旧日志
         """
@@ -29,7 +29,7 @@ class LogBroadcaster:
     async def subscribe(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """
         订阅日志推送
-        
+
         Args:
             callback: 接收日志的回调函数,参数为日志字典
         """
@@ -39,7 +39,7 @@ class LogBroadcaster:
     async def unsubscribe(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """
         取消订阅
-        
+
         Args:
             callback: 要移除的回调函数
         """
@@ -49,7 +49,7 @@ class LogBroadcaster:
     async def broadcast(self, log_record: dict[str, Any]) -> None:
         """
         广播日志到所有订阅者
-        
+
         Args:
             log_record: 日志记录字典
         """
@@ -79,10 +79,10 @@ class LogBroadcaster:
     def get_recent_logs(self, limit: int = 100) -> list[dict[str, Any]]:
         """
         获取最近的日志记录
-        
+
         Args:
             limit: 返回的最大日志数量
-            
+
         Returns:
             日志记录列表
         """
@@ -112,7 +112,7 @@ class BroadcastLogHandler(logging.Handler):
     def __init__(self, broadcaster: LogBroadcaster):
         """
         初始化处理器
-        
+
         Args:
             broadcaster: 日志广播器实例
         """
@@ -123,10 +123,10 @@ class BroadcastLogHandler(logging.Handler):
     def _get_logger_metadata(self, logger_name: str) -> dict[str, str | None]:
         """
         获取logger的元数据（别名和颜色）
-        
+
         Args:
             logger_name: logger名称
-            
+
         Returns:
             包含alias和color的字典
         """
@@ -142,7 +142,7 @@ class BroadcastLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """
         处理日志记录
-        
+
         Args:
             record: 日志记录
         """
@@ -211,12 +211,10 @@ class BroadcastLogHandler(logging.Handler):
             # 在事件循环中异步广播
             # 使用try/except捕获submit时的异常，避免关闭期间的错误
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self.broadcaster.broadcast(log_dict), loop
-                )
+                future = asyncio.run_coroutine_threadsafe(self.broadcaster.broadcast(log_dict), loop)
                 # 不要阻塞地等待，但设置一个超时以确保Future不会永久挂起
                 # 这避免了"was never awaited"警告
-                future.set_exception_handler = lambda ctx: None  # 忽略任何Future相关的异常
+                future.set_exception_handler = lambda ctx: None  # pyright: ignore[reportAttributeAccessIssue] # 忽略任何Future相关的异常
             except RuntimeError:
                 # 事件循环已关闭，忽略此错误
                 pass
@@ -228,10 +226,10 @@ class BroadcastLogHandler(logging.Handler):
     def format_time(self, record: logging.LogRecord) -> str:
         """
         格式化时间戳
-        
+
         Args:
             record: 日志记录
-            
+
         Returns:
             格式化的时间字符串
         """
@@ -248,7 +246,7 @@ _global_broadcaster: LogBroadcaster | None = None
 def get_log_broadcaster() -> LogBroadcaster:
     """
     获取全局日志广播器实例
-    
+
     Returns:
         日志广播器实例
     """
@@ -261,7 +259,7 @@ def get_log_broadcaster() -> LogBroadcaster:
 def setup_log_broadcasting() -> LogBroadcaster:
     """
     设置日志广播系统,将日志处理器添加到根日志记录器
-    
+
     Returns:
         日志广播器实例
     """
