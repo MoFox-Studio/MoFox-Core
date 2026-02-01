@@ -3,7 +3,8 @@ services:
     container_name: MoFox-Bot
     build: .
     ports:
-      - "8000:8000"
+      - "8000:8000"    # 主程序
+      - "12138:12138"  # WebUI
     environment:
       - TZ=Asia/Shanghai
     # 核心脚本：逻辑判断并启动
