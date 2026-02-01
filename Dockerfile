@@ -1,20 +1,17 @@
 FROM python:3.13.5-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# 工作目录
 WORKDIR /app
 
-# 编译器
-RUN apt-get update && apt-get install -y build-essential
-# 复制依赖列表和锁文件
-COPY pyproject.toml uv.lock ./
+# 安装编译器和 git (自动克隆必带)
+RUN apt-get update && apt-get install -y build-essential git && rm -rf /var/lib/apt/lists/*
 
-# 安装依赖（使用 --frozen 确保使用锁文件中的版本）
+COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-# 复制项目文件
 COPY . .
 
 EXPOSE 8000
 
-ENTRYPOINT [ "uv", "run", "bot.py" ]
+# 这里删掉 ENTRYPOINT，改用 CMD，方便在 compose 里覆盖
+CMD ["uv", "run", "bot.py"]
