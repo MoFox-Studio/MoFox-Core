@@ -73,7 +73,20 @@ class UserProfileTool(BaseTool):
         try:
             # 提取参数
             target_user_id = function_args.get("target_user_id")
-            target_user_name = function_args.get("target_user_name", target_user_id)
+            
+            # 健壮性检查：防止传入字典而非实际值
+            if isinstance(target_user_id, dict):
+                logger.warning(f"UserProfileTool received a dictionary for target_user_id, which is invalid: {target_user_id}")
+                return {
+                    "type": "error",
+                    "id": "user_profile_update",
+                    "content": "错误：收到的用户ID参数类型不正确。"
+                }
+
+            target_user_name = function_args.get("target_user_name")
+            if not target_user_name or isinstance(target_user_name, dict):
+                target_user_name = target_user_id
+            
             if not target_user_id:
                 return {
                     "type": "error",
@@ -83,6 +96,8 @@ class UserProfileTool(BaseTool):
 
             # 从LLM传入的参数
             impression_hint = function_args.get("impression_hint", "")
+            if isinstance(impression_hint, dict):
+                impression_hint = ""
 
             # 如果LLM没有传入任何有效参数，返回提示
             if not impression_hint:

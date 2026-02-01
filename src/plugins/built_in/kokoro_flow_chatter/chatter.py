@@ -18,6 +18,7 @@ Kokoro Flow Chatter - Chatter 主类
 
 import asyncio
 import time
+import random
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.chat.planner_actions.action_manager import ChatterActionManager
@@ -272,10 +273,29 @@ class KokoroFlowChatter(BaseChatter):
 
                     exec_results = []
                     has_reply = False
+                    is_first_reply_action = True
 
                     for idx, action in enumerate(plan_response.actions, 1):
                         logger.debug(f"[KFC] 执行第 {idx}/{len(plan_response.actions)} 个动作: {action.type}")
+                        # 如果是回复动作，并且不是第一个，则增加模拟打字延迟
+                        if action.type in ("kfc_reply", "respond"):
+                            if not is_first_reply_action:
+                                content_to_send = action.params.get("content", "")
+                                delay = self._calculate_typing_delay(content_to_send)
+                                if delay > 0:
+                                    logger.info(f"[KFC] 模拟打字输入，为下一条消息延迟 {delay:.2f} 秒...")
+                                    await asyncio.sleep(delay)
+                            
+                            # 更新标志
+                            is_first_reply_action = False
+                        
                         action_data = action.params.copy()
+
+                        # 在统一模式或极速模式下，为 kfc_reply 动作强制禁用全局回复分割器
+                        is_unified_or_fast = is_fast_mode or self._mode == KFCMode.UNIFIED
+                        if is_unified_or_fast and action.type in ("kfc_reply", "respond"):
+                            action_data["enable_splitter"] = False
+                            logger.debug("[KFC] 统一模式/极速模式下，为 kfc_reply 禁用全局回复分割器。")
 
                         try:
                             result = await self.action_manager.execute_action(
@@ -538,6 +558,40 @@ class KokoroFlowChatter(BaseChatter):
         }
         result.update(kwargs)
         return result
+
+    def _calculate_typing_delay(self, text: str) -> float:
+        """
+        根据文本长度计算模拟打字的延迟时间
+        参考全局回复分割器的逻辑
+        """
+        if not text:
+            return 0.0
+
+        # 从全局配置读取打字速度参数，如果不存在则使用默认值
+        try:
+            from src.config.config import global_config
+            splitter_config = getattr(global_config, "response_splitter", None)
+            if splitter_config:
+                min_delay = getattr(splitter_config, "min_delay", 0.8)
+                max_delay = getattr(splitter_config, "max_delay", 4.0)
+                chars_per_sec = getattr(splitter_config, "chars_per_sec", 15)
+            else:
+                min_delay = 0.8
+                max_delay = 4.0
+                chars_per_sec = 15
+        except (ImportError, AttributeError):
+            min_delay = 0.8
+            max_delay = 4.0
+            chars_per_sec = 15
+
+        # 计算基础延迟
+        delay = len(text) / chars_per_sec
+
+        # 增加一点随机性，使其更自然
+        delay *= random.uniform(0.9, 1.3)
+
+        # 应用最小/最大延迟
+        return max(min_delay, min(delay, max_delay))
 
     def get_stats(self) -> dict[str, Any]:
         """获取统计信息"""

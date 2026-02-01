@@ -218,10 +218,10 @@ def build_actions_module(available_actions: dict[str, ActionInfo] | None = None)
 
     # 核心限制说明（放在最前面）
     action_blocks = [
-        """⚠️ **输出限制（必须遵守）**：
-1. `actions` 数组里**只能有一个** `kfc_reply`，不能写多个
-2. `kfc_reply` 的 `content` 要简洁，像发微信一样，**不要写长篇大论**
-3. 系统会自动把你的回复拆分成多条消息发送，你不需要自己分段
+        """
+1. 如果你需要发送多条消息，可以在 `actions` 数组里写多个 `kfc_reply` 动作。
+2. 每个 `kfc_reply` 的 `content` 都应是一条独立且简短的消息，像平时发微信一样。
+3. **不要**在一条 `content` 里写长篇大论，自己想好在哪里分句。
 """
     ]
 
@@ -261,9 +261,9 @@ def build_actions_module(available_actions: dict[str, ActionInfo] | None = None)
 def _get_default_actions_block() -> str:
     """获取默认的内置动作描述块"""
     return """⚠️ **输出限制（必须遵守）**：
-1. `actions` 数组里**只能有一个** `kfc_reply`，不能写多个
-2. `kfc_reply` 的 `content` 要简洁，像发微信一样，**不要写长篇大论**
-3. 系统会自动把你的回复拆分成多条消息发送，你不需要自己分段
+1. 如果你需要发送多条消息，可以在 `actions` 数组里写多个 `kfc_reply` 动作。
+2. 每个 `kfc_reply` 的 `content` 都应是一条独立且简短的消息，像平时发微信一样。
+3. **不要**在一条 `content` 里写长篇大论，自己想好在哪里分句。
 
 ### `kfc_reply` - 发消息
 ```json
@@ -317,7 +317,11 @@ async def build_output_module(
     # JSON 输出格式说明（更自然的思考引导）
     json_format = """### 输出格式（JSON）
 
-⚠️ **核心规则**：actions 中只能有**一个** `kfc_reply`动作！不能有多个`kfc_reply`动作！想说的话全写在一条消息里，系统会自动拆分发送。
+**关于 `actions` 数组**:
+这里是你决定要执行的具体操作。核心原则是**自然**。
+- **发消息 (`kfc_reply`)**: 就像你平时聊天一样。如果一句话很长，你会怎么发？是分成几句，还是一大段？根据你的人设和当前的情感状态，做出最自然的选择。如果需要发多条，就在 `actions` 里放多个 `kfc_reply` 对象。
+- **其他动作**: 根据需要使用其他可用动作。
+- **无动作**: 如果你觉得此时什么都不做最合适，就使用 `{"type": "do_nothing"}`。
 
 ```json
 {
@@ -325,7 +329,8 @@ async def build_output_module(
   "expected_user_reaction": "猜猜对方看到会怎么想",
   "max_wait_seconds": "预估的等待时间（秒）",
   "actions": [
-    {"type": "kfc_reply", "content": "你想说的所有话，写在这里面"}
+    {"type": "kfc_reply", "content": "这是第一条消息。"},
+    {"type": "kfc_reply", "content": "这是第二条消息，如果需要的话。"}
   ]
 }
 ```
