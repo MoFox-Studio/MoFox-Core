@@ -1,9 +1,13 @@
 services:
   core:
     container_name: MoFox-Bot
-    build: .
+    image: ikun11451/mofox-core:latest  #master分支
+    #image: ikun11451/mofox-core-dev:latest  #dev分支
+    #image: ikun11451/mofox-core-classical:latest  #classical分支
+    #build: .
     ports:
-      - "8000:8000"
+      - "8000:8000"    # 主程序
+      - "12138:12138"  # WebUI
     environment:
       - TZ=Asia/Shanghai
     # 核心脚本：逻辑判断并启动

@@ -3,15 +3,16 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# 安装编译器和 git (自动克隆必带)
-RUN apt-get update && apt-get install -y build-essential git && rm -rf /var/lib/apt/lists/*
+# 安装编译器、git 和 Python 开发头文件
+RUN apt-get update && apt-get install -y build-essential git python3-dev && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY . .
 
+# 同时声明两个端口
 EXPOSE 8000
+EXPOSE 12138
 
-# 这里删掉 ENTRYPOINT，改用 CMD，方便在 compose 里覆盖
 CMD ["uv", "run", "bot.py"]
