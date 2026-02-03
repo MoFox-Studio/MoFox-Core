@@ -1,7 +1,8 @@
 services:
   core:
     container_name: MoFox-Bot
-    build: .
+    image: ikun11451/mofox-core:latest
+    #build: .
     ports:
       - "8000:8000"    # 主程序
       - "12138:12138"  # WebUI
