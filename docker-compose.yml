@@ -1,7 +1,9 @@
 services:
   core:
     container_name: MoFox-Bot
-    image: ikun11451/mofox-core:latest
+    image: ikun11451/mofox-core:latest  #master分支
+    #image: ikun11451/mofox-core-dev:latest  #dev分支
+    #image: ikun11451/mofox-core-classical:latest  #classical分支
     #build: .
     ports:
       - "8000:8000"    # 主程序
