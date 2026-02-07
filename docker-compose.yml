@@ -1,19 +1,23 @@
 services:
   core:
     container_name: MoFox-Bot
-    #### prod ####
-    image: ericterminal/mofox:classical
-    #### dev ####
-    # image: ericterminal/mofox:dev
+    image: ikun11451/mofox-core:latest  #master分支
+    #image: ikun11451/mofox-core-dev:latest  #dev分支
+    #image: ikun11451/mofox-core-classical:latest  #classical分支
+    #build: .
+    ports:
+      - "8000:8000"    # 主程序
+      - "12138:12138"  # WebUI
     environment:
       - TZ=Asia/Shanghai
+    # 核心脚本：逻辑判断并启动
+    entrypoint: ["sh", "-c", "if [ ! -d 'plugins/webui_backend' ]; then git clone -b webui-dist https://github.com/MoFox-Studio/MoFox-Core-Webui.git plugins/webui_backend; fi; exec uv run bot.py"]
     volumes:
-      - ./docker-config/core/.env:/app/.env # 持久化env配置文件
-      - ./docker-config/core:/app/config # 持久化bot配置文件
-      - ./data/core/mofox_bot_statistics.html:/app/mofox_bot_statistics.html #统计数据输出
-      - ./data/app:/app/data # 共享目录
-      - ./data/core/plugins:/app/plugins # 插件目录
-      - ./data/core/logs:/app/logs # 日志目录
+      - ./.env:/app/.env
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./plugins:/app/plugins
+      - ./data/core/logs:/app/logs
     restart: always
     networks:
       - mofox
