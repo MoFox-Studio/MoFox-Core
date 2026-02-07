@@ -892,11 +892,8 @@ class DatabaseMigrator:
                     else:
                         target_table = copy_table_structure(source_table, MetaData(), self.target_engine)
 
-                    # 对 messages 表限制迁移行数（只迁移最新 1 万条）
+                    # 全量迁移，不再限制行数
                     row_limit = None
-                    if source_table.name == "messages":
-                        row_limit = 10000
-                        logger.info("messages 表将只迁移最新 %d 条记录", row_limit)
 
                     # 每个批次使用独立事务，传入 engine 而不是 connection
                     migrated_rows, error_count = migrate_table_data(
@@ -1301,10 +1298,10 @@ def fix_postgresql_sequences(engine: Engine):
                 try:
                     # 获取当前表中该列的最大值
                     max_result = conn.execute(text(f"SELECT COALESCE(MAX({column_name}), 0) FROM {table_name}"))
-                    max_val = max_result.scalar()
+                    max_val = max_result.scalar() or 0
 
                     # 设置序列的下一个值
-                    next_val = max_val + 1
+                    next_val = int(max_val) + 1
                     conn.execute(text(f"SELECT setval('{seq_name}', {next_val}, false)"))
                     conn.commit()
 
