@@ -143,7 +143,7 @@ class MessageHandler:
         )
 
     async def _process_message_to_database(
-        self, envelope: MessageEnvelope, chat: "ChatStream"
+        self, envelope: MessageEnvelope, chat: "ChatStream", skip_media_processing: bool = False
     ) -> DatabaseMessages:
         """将消息信封转换为 DatabaseMessages - 统一方法"""
         from src.chat.message_receive.message_processor import process_message_from_dict
@@ -151,7 +151,8 @@ class MessageHandler:
         message = await process_message_from_dict(
             message_dict=envelope,
             stream_id=chat.stream_id,
-            platform=chat.platform
+            platform=chat.platform,
+            skip_media_processing=skip_media_processing
         )
 
         # 填充聊天流时间信息
@@ -467,8 +468,48 @@ class MessageHandler:
             platform = message_info.get("platform", "unknown")
             chat = await self._get_or_create_chat_stream(platform, user_info, group_info)
 
+            # --- 方案二：提前过滤静默群组的媒体处理 ---
+            skip_media = False
+            is_group = bool(group_info)
+            if global_config and is_group:
+                group_id_str = str(group_info.get("group_id", "")) # type: ignore
+                if group_id_str in global_config.message_receive.mute_group_list:
+                    # 检查是否提及机器人 (增强版预检)
+                    is_mentioned = False
+                    message_segment = envelope.get("message_segment", [])
+                    if isinstance(message_segment, dict):
+                        message_segment = [message_segment]
+                    
+                    bot_qq = str(global_config.bot.qq_account)
+                    
+                    for seg in message_segment:
+                        s_type = seg.get("type")
+                        s_data = seg.get("data")
+                        
+                        # 1. 显式提及标志
+                        if s_type == "mention_bot" and s_data:
+                            is_mentioned = True
+                            break
+                        
+                        # 2. 检查 AT 段
+                        if s_type == "at" and isinstance(s_data, str):
+                            # 格式可能是 "nickname:qq" 或纯 "qq"
+                            if bot_qq in s_data:
+                                is_mentioned = True
+                                break
+                        
+                        # 3. 检查回复段 (如果回复的是机器人)
+                        if s_type == "reply" and str(s_data) == message_info.get("self_id"):
+                            is_mentioned = True
+                            break
+                    
+                    if not is_mentioned:
+                        # 是静默群且没被 @，启用跳过媒体处理
+                        skip_media = True
+                        logger.debug(f"[MessageHandler] 群组 {group_id_str} 处于静默模式且未被@，将跳过昂贵的媒体处理")
+
             # 将消息信封转换为 DatabaseMessages
-            message = await self._process_message_to_database(envelope, chat)
+            message = await self._process_message_to_database(envelope, chat, skip_media_processing=skip_media)
 
             # 注册消息到聊天管理器
             from src.chat.message_receive.chat_stream import get_chat_manager
@@ -736,15 +777,20 @@ class MessageHandler:
             # 检查是否需要处理消息
             should_process_in_manager = True
             if group_info and str(group_info.group_id) in global_config.message_receive.mute_group_list:
-                is_image_or_emoji = message.is_picid or message.is_emoji
-                if not message.is_mentioned and not is_image_or_emoji:
-                    logger.debug(
-                        f"群组 {group_info.group_id} 在静默列表中，且消息不是@、回复或图片/表情包，跳过消息管理器处理"
-                    )
-                    should_process_in_manager = False
-                elif is_image_or_emoji:
-                    logger.debug(f"群组 {group_info.group_id} 在静默列表中，但消息是图片/表情包，静默处理")
-                    should_process_in_manager = False
+                # 只有未提及机器人的消息才会被静默处理
+                if not message.is_mentioned:
+                    is_image_or_emoji = message.is_picid or message.is_emoji
+                    if not is_image_or_emoji:
+                        logger.debug(
+                            f"群组 {group_info.group_id} 在静默列表中，且未提及机器人，跳过消息处理"
+                        )
+                        should_process_in_manager = False
+                    else:
+                        logger.debug(f"群组 {group_info.group_id} 在静默列表中，图片消息未提及机器人，静默处理")
+                        should_process_in_manager = False
+                else:
+                    # 如果提到了机器人，即使在静默群组中也要处理
+                    logger.info(f"[MessageHandler] 静默群组 {group_info.group_id} 中检测到提及机器人的消息，允许处理")
 
             if should_process_in_manager:
                 await message_manager.add_message(chat.stream_id, message)
