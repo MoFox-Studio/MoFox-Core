@@ -12,7 +12,6 @@ env:
   REGISTRY_USER: ikun11451
   IMAGE_BASE: mofox-core
 
-# Workflow's jobs
 jobs:
   build-amd64:
     name: Build AMD64 Image
@@ -25,19 +24,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 新增：动态计算镜像名称
+      - name: Determine Image Name
+        id: image_name
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}" >> $GITHUB_ENV
+          else
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           buildkitd-flags: --debug
 
-      # Log in docker hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      # Build and push AMD64 image by digest
       - name: Build and push AMD64
         id: build
         uses: docker/build-push-action@v5
@@ -46,9 +53,10 @@ jobs:
           platforms: linux/amd64
           file: ./Dockerfile
           push: true
-          outputs: type=image,name=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }},push-by-digest=true,name-canonical=true
-          cache-from: type=registry,ref=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}:amd64-cache
-          cache-to: type=registry,ref=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}:amd64-cache,mode=max
+          # 修改：使用 REPO_NAME 变量
+          outputs: type=image,name=${{ env.REPO_NAME }},push-by-digest=true,name-canonical=true
+          cache-from: type=registry,ref=${{ env.REPO_NAME }}:amd64-cache
+          cache-to: type=registry,ref=${{ env.REPO_NAME }}:amd64-cache,mode=max
 
   build-arm64:
     name: Build ARM64 Image
@@ -61,19 +69,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 新增：同样需要计算名称
+      - name: Determine Image Name
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}" >> $GITHUB_ENV
+          else
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           buildkitd-flags: --debug
 
-      # Log in docker hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      # Build and push ARM64 image by digest
       - name: Build and push ARM64
         id: build
         uses: docker/build-push-action@v5
@@ -82,9 +97,10 @@ jobs:
           platforms: linux/arm64
           file: ./Dockerfile
           push: true
-          outputs: type=image,name=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }},push-by-digest=true,name-canonical=true
-          cache-from: type=registry,ref=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}:arm64-cache
-          cache-to: type=registry,ref=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}:arm64-cache,mode=max
+          # 修改：使用 REPO_NAME 变量
+          outputs: type=image,name=${{ env.REPO_NAME }},push-by-digest=true,name-canonical=true
+          cache-from: type=registry,ref=${{ env.REPO_NAME }}:arm64-cache
+          cache-to: type=registry,ref=${{ env.REPO_NAME }}:arm64-cache,mode=max
 
   create-manifest:
     name: Create Multi-Arch Manifest
@@ -96,17 +112,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Log in docker hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
+      # 新增：Manifest 步骤也需要计算名称
+      - name: Determine Image Name
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}" >> $GITHUB_ENV
+          else
+            echo "REPO_NAME=${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
       - name: Create and Push Manifest
         run: |
-          FULL_IMAGE_NAME="${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}:latest"
+          # 修改：使用 REPO_NAME
+          FULL_IMAGE_NAME="${{ env.REPO_NAME }}:latest"
           echo "Creating manifest for $FULL_IMAGE_NAME"
           docker buildx imagetools create -t $FULL_IMAGE_NAME \
-            ${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}@${{ needs.build-amd64.outputs.digest }} \
-            ${{ env.REGISTRY_USER }}/${{ env.IMAGE_BASE }}-${{ github.ref_name }}@${{ needs.build-arm64.outputs.digest }}
+            ${{ env.REPO_NAME }}@${{ needs.build-amd64.outputs.digest }} \
+            ${{ env.REPO_NAME }}@${{ needs.build-arm64.outputs.digest }}
