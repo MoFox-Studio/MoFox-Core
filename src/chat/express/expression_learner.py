@@ -675,7 +675,7 @@ class ExpressionLearner:
 
                     # 保存模型
                     if total_samples > 0:
-                        if learner.save(style_learner_manager.model_save_path):
+                        if await learner.save_async(style_learner_manager.model_save_path):
                             logger.debug(f"StyleLearner 模型保存成功: {target_chat_id}")
                         else:
                             logger.error(f"StyleLearner 模型保存失败: {target_chat_id}")

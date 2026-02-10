@@ -702,7 +702,8 @@ class EmojiManager:
 
                 image_data_for_vlm, image_format_for_vlm = image_base64, image_format
                 if image_format in ["gif", "GIF"]:
-                    image_base64_frames = get_image_manager().transform_gif(image_base64)
+                    # 使用 asyncio.to_thread 将耗时的 GIF 处理移至线程池
+                    image_base64_frames = await asyncio.to_thread(get_image_manager().transform_gif, image_base64)
                     if not image_base64_frames:
                         raise RuntimeError("GIF表情包转换失败")
                     image_data_for_vlm, image_format_for_vlm = image_base64_frames, "jpeg"
@@ -718,6 +719,9 @@ class EmojiManager:
                             continue
 
                         vlm_response_json = self._parse_json_response(vlm_response_str)
+                        if not vlm_response_json:
+                            logger.warning("[VLM分析] 无法解析VLM响应为JSON")
+                            continue
                         description = vlm_response_json.get("detailed_description", "")
                         emotions = vlm_response_json.get("keywords", [])
                         refined_description = vlm_response_json.get("refined_sentence", "")

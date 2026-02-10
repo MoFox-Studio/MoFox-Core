@@ -242,7 +242,8 @@ class ImageManager:
                 image_format_check = (Image.open(io.BytesIO(image_bytes)).format or "jpeg").lower()
                 if image_format_check == "gif":
                     logger.info(f"检测到GIF图片 (Hash: {image_hash[:8]}...)，正在转换为JPG...")
-                    if transformed_b64 := self.transform_gif(image_base64):
+                    # 使用 asyncio.to_thread 将耗时的 GIF 处理移至线程池
+                    if transformed_b64 := await asyncio.to_thread(self.transform_gif, image_base64):
                         image_base64 = transformed_b64
                         image_bytes = base64.b64decode(image_base64)
                         logger.info("GIF转换成功，将使用转换后的图片进行描述")

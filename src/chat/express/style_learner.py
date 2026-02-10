@@ -3,6 +3,7 @@
 基于ExpressorModel实现的表达风格学习和预测系统
 支持多聊天室独立建模和在线学习
 """
+import asyncio
 import os
 import pickle
 import time
@@ -337,16 +338,8 @@ class StyleLearner:
         self.expressor.decay(factor)
         logger.debug(f"应用知识衰减: chat_id={self.chat_id}")
 
-    def save(self, base_path: str) -> bool:
-        """
-        保存学习器到文件
-
-        Args:
-            base_path: 基础保存路径
-
-        Returns:
-            是否保存成功
-        """
+    def _sync_save(self, base_path: str) -> bool:
+        """同步保存逻辑（供异步方法调用）"""
         try:
             # 创建保存目录
             save_dir = os.path.join(base_path, self.chat_id)
@@ -380,12 +373,18 @@ class StyleLearner:
                 os.fsync(f.fileno())
 
             os.replace(tmp_meta_path, meta_path)
-
             return True
-
         except Exception as e:
             logger.error(f"保存StyleLearner失败: {e}")
             return False
+
+    def save(self, base_path: str) -> bool:
+        """保存学习器到文件 (兼容旧接口，同步调用)"""
+        return self._sync_save(base_path)
+
+    async def save_async(self, base_path: str) -> bool:
+        """异步保存学习器到文件"""
+        return await asyncio.to_thread(self._sync_save, base_path)
 
     def load(self, base_path: str) -> bool:
         """
