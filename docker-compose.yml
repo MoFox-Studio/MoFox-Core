@@ -1,6 +1,6 @@
 services:
   core:
-    container_name: MoFox-Bot
+    container_name: mofoxbot
     image: ikun11451/mofox-core:latest  #master分支
     #image: ikun11451/mofox-core-dev:latest  #dev分支
     #image: ikun11451/mofox-core-classical:latest  #classical分支
