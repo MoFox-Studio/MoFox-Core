@@ -484,7 +484,7 @@ class OpenaiClient(BaseClient):
             api_key=self.api_provider.get_api_key(),
             max_retries=0,
             timeout=self.api_provider.timeout,
-            http_client=httpx.AsyncClient(limits=limits),  # 🔧 自定义连接池配置
+            http_client=httpx.AsyncClient(limits=limits,headers = None),  # 🔧 自定义连接池配置
         )
 
         # 存入全局缓存（带事件循环ID）
@@ -593,6 +593,8 @@ class OpenaiClient(BaseClient):
 
                 resp, usage_record = async_response_parser(req_task.result())
         except APIConnectionError as e:
+            logger.error(f"OpenAI API连接错误: {e}")
+            logger.error(f"错误类型: {type(e)}")
             # 重封装APIConnectionError为NetworkConnectionError
             raise NetworkConnectionError() from e
         except APIStatusError as e:
