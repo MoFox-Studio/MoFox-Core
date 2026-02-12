@@ -500,12 +500,19 @@ class ProactiveThinker:
 
             # 执行动作（回复生成在 Action.execute() 中完成）
             for action in plan_response.actions:
+                action_data = action.params.copy()
+                
+                # 在统一模式下，为 kfc_reply 动作强制禁用全局回复分割器
+                if self._mode == KFCMode.UNIFIED and action.type in ("kfc_reply", "respond"):
+                    action_data["enable_splitter"] = False
+                    logger.debug("[KFC ProactiveThinker] 统一模式下，为 kfc_reply 禁用全局回复分割器。")
+
                 result = await action_manager.execute_action(
                     action_name=action.type,
                     chat_id=session.stream_id,
                     target_message=None,
                     reasoning=plan_response.thought,
-                    action_data=action.params,
+                    action_data=action_data,
                     thinking_id=None,
                     log_prefix="[KFC ProactiveThinker]",
                 )
@@ -748,12 +755,19 @@ class ProactiveThinker:
 
             # 执行动作（回复生成在 Action.execute() 中完成）
             for action in plan_response.actions:
+                action_data = action.params.copy()
+                
+                # 在统一模式下，为 kfc_reply 动作强制禁用全局回复分割器
+                if self._mode == KFCMode.UNIFIED and action.type in ("kfc_reply", "respond"):
+                    action_data["enable_splitter"] = False
+                    logger.debug("[KFC ProactiveThinker] 统一模式下，为 kfc_reply 禁用全局回复分割器。")
+
                 result = await action_manager.execute_action(
                     action_name=action.type,
                     chat_id=session.stream_id,
                     target_message=None,
                     reasoning=plan_response.thought,
-                    action_data=action.params,
+                    action_data=action_data,
                     thinking_id=None,
                     log_prefix="[KFC ProactiveThinker]",
                 )
