@@ -394,6 +394,9 @@ class PromptComponentManager:
                 try:
                     # 调用内容提供者生成要注入的文本
                     content = await provider(params, target_prompt_name)
+                    # 转义注入内容中的花括号，防止在后续的 format 调用中被误认为占位符
+                    if isinstance(content, str):
+                        content = content.replace("{", "{{").replace("}", "}}")
                 except Exception as e:
                     logger.error(f"执行规则 '{rule}' (来源: {source}) 的内容提供者时失败: {e}")
                     continue

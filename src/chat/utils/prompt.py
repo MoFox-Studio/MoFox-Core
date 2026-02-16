@@ -1023,7 +1023,16 @@ class Prompt:
 
             # 然后使用关键字参数对结果进行再次格式化
             if kwargs:
-                processed_template = processed_template.format(**kwargs)
+                # 过滤掉模板中不存在的关键字参数，并转义字符串值中的花括号
+                safe_kwargs = {}
+                for k, v in kwargs.items():
+                    if k in self.args:
+                        if isinstance(v, str):
+                            # 转义花括号，防止被 format 误认为嵌套占位符
+                            safe_kwargs[k] = v.replace("{", "{{").replace("}", "}}")
+                        else:
+                            safe_kwargs[k] = v
+                processed_template = processed_template.format(**safe_kwargs)
 
             # 最后，将转义花括号的临时标记还原
             result = self._restore_escaped_braces(processed_template)
