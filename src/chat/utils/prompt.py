@@ -333,11 +333,13 @@ class Prompt:
         # 在解析前先处理转义花括号，避免将它们误认为占位符
         processed_template = self._process_escaped_braces(template)
         # 使用正则表达式查找所有花括号内的内容
-        result = re.findall(r"\{(.*?)}", processed_template)
+        result = re.findall(r"\{(.*?)\}", processed_template)
         for expr in result:
+            # 提取变量名部分，忽略格式说明符（如 {elapsed_minutes:.1f} -> elapsed_minutes）
+            arg_name = expr.split(":")[0].split("!")[0].strip()
             # 添加到列表中，并确保唯一性
-            if expr and expr not in template_args:
-                template_args.append(expr)
+            if arg_name and arg_name not in template_args:
+                template_args.append(arg_name)
         return template_args
 
     async def build(self) -> str:
