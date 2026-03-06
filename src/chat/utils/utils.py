@@ -449,9 +449,8 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     # 第三层：保护数学公式和代码块
     protected_text, special_blocks_mapping = protect_special_blocks(protected_text)
 
-    # 提取被 () 或 [] 或 （）包裹且包含中文的内容
-    pattern = re.compile(r"[(\[（](?=.*[一-鿿]).+?[)\]）]")
-    _extracted_contents = pattern.findall(protected_text)
+    # 仅提取并过滤被 [] 包裹且包含中文的内容
+    pattern = re.compile(r"\[(?=.*[一-鿿]).+?\]")
     cleaned_text = pattern.sub("", protected_text)
 
     if cleaned_text.strip() == "":

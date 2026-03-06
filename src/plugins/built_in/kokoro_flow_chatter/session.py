@@ -5,6 +5,10 @@ Kokoro Flow Chatter - 会话管理
 - Session 只有 IDLE 和 WAITING 两种状态
 - 包含 mental_log（心理活动历史）
 - 包含 waiting_config（等待配置）
+
+性能优化：
+- 使用 asyncio.to_thread() 将同步文件 I/O 异步化，避免阻塞事件循环
+- 支持高并发场景下的会话管理
 """
 
 import asyncio
@@ -335,15 +339,24 @@ class SessionManager:
             logger.info(f"创建新会话: {user_id}")
             return session
 
+    def _sync_load_from_file(self, file_path: Path) -> dict | None:
+        """同步文件加载操作（在线程池中执行）"""
+        if not file_path.exists():
+            return None
+        with open(file_path, encoding="utf-8") as f:
+            return json.load(f)
+
     async def _load_from_file(self, user_id: str) -> KokoroSession | None:
-        """从文件加载会话"""
+        """从文件加载会话（异步化，不阻塞事件循环）"""
         file_path = self._get_file_path(user_id)
         if not file_path.exists():
             return None
 
         try:
-            with open(file_path, encoding="utf-8") as f:
-                data = json.load(f)
+            # 使用 asyncio.to_thread 将同步 I/O 放到线程池执行，避免阻塞事件循环
+            data = await asyncio.to_thread(self._sync_load_from_file, file_path)
+            if data is None:
+                return None
             session = KokoroSession.from_dict(data)
             logger.debug(f"从文件加载会话: {user_id}")
             return session
@@ -351,8 +364,15 @@ class SessionManager:
             logger.error(f"加载会话失败 {user_id}: {e}")
             return None
 
+    def _sync_save_to_file(self, temp_path: Path, file_path: Path, data: dict) -> bool:
+        """同步文件保存操作（在线程池中执行）"""
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, file_path)
+        return True
+
     async def save_session(self, user_id: str) -> bool:
-        """保存会话到文件"""
+        """保存会话到文件（异步化，不阻塞事件循环）"""
         async with self._get_lock(user_id):
             if user_id not in self._sessions:
                 return False
@@ -361,13 +381,12 @@ class SessionManager:
             file_path = self._get_file_path(user_id)
 
             try:
+                # 在锁内准备数据，但 I/O 操作在线程池执行
                 data = session.to_dict()
                 temp_path = file_path.with_suffix(".json.tmp")
 
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-
-                os.replace(temp_path, file_path)
+                # 使用 asyncio.to_thread 将同步 I/O 放到线程池执行，避免阻塞事件循环
+                await asyncio.to_thread(self._sync_save_to_file, temp_path, file_path, data)
                 return True
             except Exception as e:
                 logger.error(f"保存会话失败 {user_id}: {e}")

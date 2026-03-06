@@ -1,3 +1,12 @@
+"""
+关系构建器
+
+性能优化：
+- 使用 asyncio.to_thread() 将同步文件 I/O 异步化，避免阻塞事件循环
+- 支持高并发场景下的关系构建
+"""
+
+import asyncio
 import os
 import pickle
 import random
@@ -81,20 +90,27 @@ class RelationshipBuilder:
     # 负责持久化存储、状态管理、缓存读写
     # ================================
 
+    def _sync_load_cache_from_file(self) -> dict | None:
+        """同步文件加载操作（在线程池中执行）"""
+        if not os.path.exists(self.cache_file_path):
+            return None
+        with open(self.cache_file_path, "rb") as f:
+            return pickle.load(f)
+
     def _load_cache(self):
-        """从文件加载持久化的缓存"""
+        """从文件加载持久化的缓存（初始化时同步调用）"""
         if os.path.exists(self.cache_file_path):
             try:
-                with open(self.cache_file_path, "rb") as f:
-                    cache_data = pickle.load(f)
+                cache_data = self._sync_load_cache_from_file()
+                if cache_data:
                     # 新格式：包含额外信息的缓存
                     self.person_engaged_cache = cache_data.get("person_engaged_cache", {})
                     self.last_processed_message_time = cache_data.get("last_processed_message_time", 0.0)
                     self.last_cleanup_time = cache_data.get("last_cleanup_time", 0.0)
 
-                logger.info(
-                    f"{self.log_prefix} 成功加载关系缓存，包含 {len(self.person_engaged_cache)} 个用户，最后处理时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_processed_message_time)) if self.last_processed_message_time > 0 else '未设置'}"
-                )
+                    logger.info(
+                        f"{self.log_prefix} 成功加载关系缓存，包含 {len(self.person_engaged_cache)} 个用户，最后处理时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_processed_message_time)) if self.last_processed_message_time > 0 else '未设置'}"
+                    )
             except Exception as e:
                 logger.error(f"{self.log_prefix} 加载关系缓存失败: {e}")
                 self.person_engaged_cache = {}
@@ -102,20 +118,38 @@ class RelationshipBuilder:
         else:
             logger.info(f"{self.log_prefix} 关系缓存文件不存在，使用空缓存")
 
+    def _sync_save_cache_to_file(self, cache_data: dict):
+        """同步文件保存操作（在线程池中执行）"""
+        os.makedirs(os.path.dirname(self.cache_file_path), exist_ok=True)
+        with open(self.cache_file_path, "wb") as f:
+            pickle.dump(cache_data, f)
+
     def _save_cache(self):
-        """保存缓存到文件"""
+        """保存缓存到文件（同步版本，用于非异步上下文）"""
         try:
-            os.makedirs(os.path.dirname(self.cache_file_path), exist_ok=True)
             cache_data = {
                 "person_engaged_cache": self.person_engaged_cache,
                 "last_processed_message_time": self.last_processed_message_time,
                 "last_cleanup_time": self.last_cleanup_time,
             }
-            with open(self.cache_file_path, "wb") as f:
-                pickle.dump(cache_data, f)
+            self._sync_save_cache_to_file(cache_data)
             logger.debug(f"{self.log_prefix} 成功保存关系缓存")
         except Exception as e:
             logger.error(f"{self.log_prefix} 保存关系缓存失败: {e}")
+
+    async def _save_cache_async(self):
+        """保存缓存到文件（异步版本，不阻塞事件循环）"""
+        try:
+            cache_data = {
+                "person_engaged_cache": self.person_engaged_cache,
+                "last_processed_message_time": self.last_processed_message_time,
+                "last_cleanup_time": self.last_cleanup_time,
+            }
+            # 使用 asyncio.to_thread 将同步 I/O 放到线程池执行
+            await asyncio.to_thread(self._sync_save_cache_to_file, cache_data)
+            logger.debug(f"{self.log_prefix} 成功保存关系缓存(异步)")
+        except Exception as e:
+            logger.error(f"{self.log_prefix} 保存关系缓存失败(异步): {e}")
 
     # ================================
     # 消息段管理模块
@@ -151,7 +185,8 @@ class RelationshipBuilder:
             logger.debug(
                 f"{self.log_prefix} 眼熟用户 {person_name} 在 {time.strftime('%H:%M:%S', time.localtime(potential_start_time))} - {time.strftime('%H:%M:%S', time.localtime(message_time))} 之间有 {new_segment['message_count']} 条消息"
             )
-            self._save_cache()
+            # 使用异步版本保存缓存，避免阻塞事件循环
+            await self._save_cache_async()
             return
 
         # 获取最后一个消息段
@@ -192,7 +227,8 @@ class RelationshipBuilder:
                 f"{self.log_prefix} 重新眼熟用户 {person_name} 创建新消息段（超过10条消息间隔）: {new_segment}"
             )
 
-        self._save_cache()
+        # 使用异步版本保存缓存，避免阻塞事件循环
+        await self._save_cache_async()
 
     async def _count_messages_in_timerange(self, start_time: float, end_time: float) -> int:
         """计算指定时间范围内的消息数量（包含边界）"""
@@ -400,13 +436,12 @@ class RelationshipBuilder:
         # 2. 为满足条件的用户构建关系
         for person_id in users_to_build_relationship:
             segments = self.person_engaged_cache[person_id]
-            # 异步执行关系构建
-            import asyncio
-
+            # 异步执行关系构建（使用 asyncio 模块已在文件顶部导入）
             asyncio.create_task(self.update_impression_on_segments(person_id, self.chat_id, segments))  # noqa: RUF006
             # 移除已处理的用户缓存
             del self.person_engaged_cache[person_id]
-            self._save_cache()
+            # 使用异步版本保存缓存，避免阻塞事件循环
+            await self._save_cache_async()
 
     # ================================
     # 关系构建模块

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from src.chat.message_receive.chat_stream import ChatStream
     from src.common.data_models.message_manager_data_model import StreamContext
 
+from src.plugin_system.apis.permission_api import permission_api
 from .models import EventType, MentalLogEntry
 from .session import KokoroSession
 
@@ -74,6 +75,30 @@ def build_identity_module() -> str:
 # ============================================================
 # 模块2: 行为准则 - 规则/边界/KFC特有准则
 # ============================================================
+
+async def build_auth_role_module(session: KokoroSession, chat_stream: Optional["ChatStream"] = None) -> str:
+    """根据主人配置生成额外提示词"""
+    if global_config is None:
+        return ""
+    
+    master_config = global_config.permission.master_prompt
+    if not master_config or not master_config.enable:
+        return ""
+
+    user_id = session.user_id
+    platform = chat_stream.platform if chat_stream else "unknown"
+    
+    try:
+        if user_id:
+            is_master = await permission_api.is_master(platform, user_id)
+            hint = master_config.master_hint if is_master else master_config.non_master_hint
+            if hint:
+                return f"\n### 身份确认\n- {hint.strip()}"
+        return ""
+    except Exception as e:
+        logger.warning(f"检测主人身份失败: {e}")
+        return ""
+
 
 def build_rules_module() -> str:
     """
@@ -425,6 +450,7 @@ async def build_system_prompt(
         "",
         "## 1. 你是谁",
         build_identity_module(),
+        await build_auth_role_module(session, chat_stream), # 注入主人身份提示
         "",
         "## 2. 规则",
         build_rules_module(),

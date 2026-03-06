@@ -813,6 +813,11 @@ class _RequestStrategy:
     ) -> tuple[APIResponse, ModelInfo]:
         """
         执行请求，动态选择最佳可用模型，并在模型失败时进行故障转移。
+
+        支持的请求模式：
+        1. 纯文本请求：传入 prompt 参数
+        2. 图片请求：传入 prompt + image_base64 + image_format 参数
+        3. 自定义消息：传入 message_list 参数
         """
         failed_models_in_this_request = set()
         max_attempts = len(self.model_list)
@@ -832,11 +837,19 @@ class _RequestStrategy:
             try:
                 # 准备请求参数
                 request_kwargs = kwargs.copy()
+
+                # 处理包含 prompt 的请求（纯文本或图片请求）
                 if request_type == RequestType.RESPONSE and "prompt" in request_kwargs:
                     prompt = request_kwargs.pop("prompt")
+                    # 预处理 prompt：添加反截断指令等
                     processed_prompt = await self.prompt_processor.prepare_prompt(
                         prompt, model_info, self.task_name
                     )
+
+                    # 检查是否为图片请求
+                    image_base64 = request_kwargs.pop("image_base64", None)
+                    image_format = request_kwargs.pop("image_format", None)
+
                     message_list = []
                     if self.system_prompt:
                         system_message = (
@@ -847,7 +860,17 @@ class _RequestStrategy:
                         )
                         message_list.append(system_message)
 
-                    user_message = MessageBuilder().add_text_content(processed_prompt).build()
+                    # 构建用户消息（可能包含图片）
+                    user_message_builder = MessageBuilder().add_text_content(processed_prompt)
+                    if image_base64 and image_format:
+                        # 图片请求：添加图片内容
+                        normalized_format = await _normalize_image_format(image_format)
+                        user_message_builder.add_image_content(
+                            image_base64=image_base64,
+                            image_format=normalized_format,
+                            support_formats=client.get_support_image_formats(),
+                        )
+                    user_message = user_message_builder.build()
                     message_list.append(user_message)
                     request_kwargs["message_list"] = message_list
 
@@ -1010,49 +1033,36 @@ class LLMRequest:
         """
         为图像生成响应。
 
+        复用统一的 execute_with_failover 策略，自动享有：
+        - 故障转移（多模型切换）
+        - 反截断检测和重试
+        - 负载均衡和惩罚机制
+
         Args:
             prompt (str): 提示词
             image_base64 (str): 图像的Base64编码字符串
             image_format (str): 图像格式（如 'png', 'jpeg' 等）
+            temperature (float | None): 温度参数
+            max_tokens (int | None): 最大token数
 
         Returns:
             (Tuple[str, str, str, Optional[List[ToolCall]]]): 响应内容、推理内容、模型名称、工具调用列表
         """
         start_time = time.time()
 
-        # 图像请求目前不使用复杂的故障转移策略，直接选择模型并执行
-        selection_result = await self._model_selector.select_best_available_model(set(), "response")
-        if not selection_result:
-            raise RuntimeError("无法为图像响应选择可用模型。")
-        model_info, api_provider, client = selection_result
-
-        normalized_format = await _normalize_image_format(image_format)
-        message = (
-            MessageBuilder()
-            .add_text_content(prompt)
-            .add_image_content(
-                image_base64=image_base64,
-                image_format=normalized_format,
-                support_formats=client.get_support_image_formats(),
-            )
-            .build()
-        )
-
-        response = await self._executor.execute_request(
-            api_provider,
-            client,
+        # 使用统一的故障转移策略，传入图片参数
+        response, model_info = await self._strategy.execute_with_failover(
             RequestType.RESPONSE,
-            model_info,
-            message_list=[message],
+            prompt=prompt,
+            image_base64=image_base64,
+            image_format=image_format,
             temperature=temperature,
             max_tokens=max_tokens,
         )
 
         await self._record_usage(model_info, response.usage, time.time() - start_time, "/chat/completions")
-        content, reasoning, _ = await self._prompt_processor.process_response(response.content or "", False)
-        reasoning = response.reasoning_content or reasoning
 
-        return content, (reasoning, model_info.name, response.tool_calls)
+        return response.content or "", (response.reasoning_content or "", model_info.name, response.tool_calls)
 
     async def generate_response_for_voice(self, voice_base64: str) -> str | None:
         """

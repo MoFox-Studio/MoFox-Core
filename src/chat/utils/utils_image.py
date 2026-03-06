@@ -162,11 +162,16 @@ class ImageManager:
 
             emoji_manager = get_emoji_manager()
 
-            # 1. 计算图片哈希
+            # 1. 计算图片哈希 - 异步处理 CPU 密集型任务
             if isinstance(image_base64, str):
                 image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
-            image_bytes = base64.b64decode(image_base64)
-            image_hash = hashlib.md5(image_bytes).hexdigest()
+            
+            def _calculate_hash_and_bytes(b64_str: str):
+                data = base64.b64decode(b64_str)
+                h = hashlib.md5(data).hexdigest()
+                return data, h
+
+            image_bytes, image_hash = await asyncio.to_thread(_calculate_hash_and_bytes, image_base64)
 
             # 如果缓存命中，可以提前释放 image_bytes
             # 但如果需要保存表情包，则需要保留 image_bytes
@@ -231,18 +236,27 @@ class ImageManager:
     async def get_image_description(self, image_base64: str) -> str:
         """获取普通图片描述，采用同步识别+缓存策略"""
         try:
-            # 1. 计算图片哈希
+            # 1. 计算图片哈希 - 异步处理 CPU 密集型任务
             if isinstance(image_base64, str):
                 image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
-            image_bytes = base64.b64decode(image_base64)
-            image_hash = hashlib.md5(image_bytes).hexdigest()
+            
+            def _calculate_hash_and_bytes(b64_str: str):
+                data = base64.b64decode(b64_str)
+                h = hashlib.md5(data).hexdigest()
+                return data, h
+
+            image_bytes, image_hash = await asyncio.to_thread(_calculate_hash_and_bytes, image_base64)
 
             # 1.5. 如果是GIF，先转换为JPG
             try:
-                image_format_check = (Image.open(io.BytesIO(image_bytes)).format or "jpeg").lower()
+                def _get_image_format(data: bytes):
+                    return (Image.open(io.BytesIO(data)).format or "jpeg").lower()
+                
+                image_format_check = await asyncio.to_thread(_get_image_format, image_bytes)
                 if image_format_check == "gif":
                     logger.info(f"检测到GIF图片 (Hash: {image_hash[:8]}...)，正在转换为JPG...")
-                    if transformed_b64 := self.transform_gif(image_base64):
+                    # 使用 asyncio.to_thread 将耗时的 GIF 处理移至线程池
+                    if transformed_b64 := await asyncio.to_thread(self.transform_gif, image_base64):
                         image_base64 = transformed_b64
                         image_bytes = base64.b64decode(image_base64)
                         logger.info("GIF转换成功，将使用转换后的图片进行描述")
@@ -434,12 +448,17 @@ class ImageManager:
             return None  # 其他错误也返回None
 
     async def process_image(self, image_base64: str) -> tuple[str, str]:
-        """处理图片并返回图片ID和描述，采用同步识别流程"""
+        """处理图片并返回图片ID和描述，采用异步识别流程"""
         try:
             if isinstance(image_base64, str):
                 image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
-            image_bytes = base64.b64decode(image_base64)
-            image_hash = hashlib.md5(image_bytes).hexdigest()
+            
+            def _calculate_hash_and_bytes(b64_str: str):
+                data = base64.b64decode(b64_str)
+                h = hashlib.md5(data).hexdigest()
+                return data, h
+
+            image_bytes, image_hash = await asyncio.to_thread(_calculate_hash_and_bytes, image_base64)
 
             image_id = ""
             description = ""
@@ -473,7 +492,11 @@ class ImageManager:
                         return "", description
 
                     clean_description = description.replace("[图片：", "").replace("]", "")
-                    image_format = (Image.open(io.BytesIO(image_bytes)).format or "png").lower()
+                    
+                    def _get_image_format(data: bytes):
+                        return (Image.open(io.BytesIO(data)).format or "png").lower()
+                    
+                    image_format = await asyncio.to_thread(_get_image_format, image_bytes)
                     filename = f"{image_id}.{image_format}"
                     image_dir = os.path.join(self.IMAGE_DIR, "images")
                     os.makedirs(image_dir, exist_ok=True)

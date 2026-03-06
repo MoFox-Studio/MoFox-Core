@@ -31,7 +31,12 @@ METADATA_SEGMENT_TYPES = frozenset(["mention_bot", "priority_info"])
 SPECIAL_SEGMENT_TYPES = frozenset(["at", "reply", "file"])
 
 
-async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: str, platform: str) -> DatabaseMessages:
+async def process_message_from_dict(
+    message_dict: MessageEnvelope,
+    stream_id: str,
+    platform: str,
+    skip_media_processing: bool = False
+) -> DatabaseMessages:
     """从适配器消息字典处理并生成 DatabaseMessages
 
     这个函数整合了原 MessageRecv 的所有处理逻辑：
@@ -42,7 +47,8 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
     Args:
         message_dict: MessageEnvelope 格式的消息字典
         stream_id: 聊天流ID
-        platform: 平台标识
+        platform: platform 标识
+        skip_media_processing: 是否跳过昂贵的媒体处理（如识图、语音转文字）
 
     Returns:
         DatabaseMessages: 处理完成的数据库消息对象
@@ -66,7 +72,12 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
     }
 
     # 异步处理消息段，生成纯文本
-    processed_plain_text = await _process_message_segments(message_segment, processing_state, message_info)
+    processed_plain_text = await _process_message_segments(
+        message_segment,
+        processing_state,
+        message_info,
+        skip_media_processing=skip_media_processing
+    )
 
     # 解析 notice 信息
     is_notify = False
@@ -168,7 +179,8 @@ async def process_message_from_dict(message_dict: MessageEnvelope, stream_id: st
 async def _process_message_segments(
     segment: SegPayload | list[SegPayload],
     state: dict,
-    message_info: MessageInfoPayload
+    message_info: MessageInfoPayload,
+    skip_media_processing: bool = False
 ) -> str:
     """递归处理消息段，转换为文字描述
 
@@ -176,6 +188,7 @@ async def _process_message_segments(
         segment: 要处理的消息段（TypedDict 或列表）
         state: 处理状态字典（用于记录消息类型标记）
         message_info: 消息基础信息（TypedDict 格式）
+        skip_media_processing: 是否跳过昂贵的媒体处理
 
     Returns:
         str: 处理后的文本
@@ -184,7 +197,7 @@ async def _process_message_segments(
     if isinstance(segment, list):
         segments_text = []
         for seg in segment:
-            processed = await _process_message_segments(seg, state, message_info)
+            processed = await _process_message_segments(seg, state, message_info, skip_media_processing)
             if processed:
                 segments_text.append(processed)
         return " ".join(segments_text)
@@ -198,13 +211,13 @@ async def _process_message_segments(
         if seg_type == "seglist" and isinstance(seg_data, list):
             segments_text = []
             for sub_seg in seg_data:
-                processed = await _process_message_segments(sub_seg, state, message_info)
+                processed = await _process_message_segments(sub_seg, state, message_info, skip_media_processing)
                 if processed:
                     segments_text.append(processed)
             return " ".join(segments_text)
 
         # 处理其他类型
-        return await _process_single_segment(segment, state, message_info)
+        return await _process_single_segment(segment, state, message_info, skip_media_processing)
 
     return ""
 
@@ -212,7 +225,8 @@ async def _process_message_segments(
 async def _process_single_segment(
     segment: SegPayload,
     state: dict,
-    message_info: MessageInfoPayload
+    message_info: MessageInfoPayload,
+    skip_media_processing: bool = False
 ) -> str:
     """处理单个消息段
 
@@ -220,6 +234,7 @@ async def _process_single_segment(
         segment: 消息段（TypedDict 格式）
         state: 处理状态字典
         message_info: 消息基础信息（TypedDict 格式）
+        skip_media_processing: 是否跳过昂贵的媒体处理
 
     Returns:
         str: 处理后的文本
@@ -249,6 +264,9 @@ async def _process_single_segment(
             if isinstance(seg_data, str):
                 state["has_picid"] = True
                 state["is_picid"] = True
+                if skip_media_processing:
+                    logger.debug("[message_processor] 静默模式，跳过图片识别")
+                    return "[图片]"
                 image_manager = get_image_manager()
                 _, processed_text = await image_manager.process_image(seg_data)
                 return processed_text
@@ -258,11 +276,16 @@ async def _process_single_segment(
             state["has_emoji"] = True
             state["is_emoji"] = True
             if isinstance(seg_data, str):
+                if skip_media_processing:
+                    logger.debug("[message_processor] 静默模式，跳过表情包识别")
+                    return "[表情包]"
                 return await get_image_manager().get_emoji_description(seg_data)
             return "[发了一个表情包，网卡了加载不出来]"
 
         elif seg_type == "voice":
             state["is_voice"] = True
+            if skip_media_processing:
+                return "[语音]"
 
             # 检查消息是否由机器人自己发送
             user_info = message_info.get("user_info", {})
@@ -303,6 +326,8 @@ async def _process_single_segment(
 
         elif seg_type == "video":
             state["is_video"] = True
+            if skip_media_processing:
+                return "[视频]"
             logger.info(f"接收到视频消息，数据类型: {type(seg_data)}")
 
             # 检查视频分析功能是否可用

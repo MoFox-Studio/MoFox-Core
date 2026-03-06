@@ -636,12 +636,17 @@ class EmojiManager:
         if global_config is None:
             raise RuntimeError("Global config is not initialized")
         try:
-            # 1. 解码图片，计算哈希值，并获取格式
+            # 1. 解码图片，计算哈希值，并获取格式 - 异步处理 CPU 密集型任务
             if isinstance(image_base64, str):
                 image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
-            image_bytes = base64.b64decode(image_base64)
-            image_hash = hashlib.md5(image_bytes).hexdigest()
-            image_format = (Image.open(io.BytesIO(image_bytes)).format or "jpeg").lower()
+            
+            def _get_img_info(b64: str):
+                data = base64.b64decode(b64)
+                h = hashlib.md5(data).hexdigest()
+                fmt = (Image.open(io.BytesIO(data)).format or "jpeg").lower()
+                return data, h, fmt
+
+            image_bytes, image_hash, image_format = await asyncio.to_thread(_get_img_info, image_base64)
 
             # 2. 检查数据库中是否已存在该表情包的描述，实现复用（使用 QueryBuilder 启用数据库缓存）
             existing_description = None
@@ -702,7 +707,8 @@ class EmojiManager:
 
                 image_data_for_vlm, image_format_for_vlm = image_base64, image_format
                 if image_format in ["gif", "GIF"]:
-                    image_base64_frames = get_image_manager().transform_gif(image_base64)
+                    # 使用 asyncio.to_thread 将耗时的 GIF 处理移至线程池
+                    image_base64_frames = await asyncio.to_thread(get_image_manager().transform_gif, image_base64)
                     if not image_base64_frames:
                         raise RuntimeError("GIF表情包转换失败")
                     image_data_for_vlm, image_format_for_vlm = image_base64_frames, "jpeg"
@@ -718,6 +724,9 @@ class EmojiManager:
                             continue
 
                         vlm_response_json = self._parse_json_response(vlm_response_str)
+                        if not vlm_response_json:
+                            logger.warning("[VLM分析] 无法解析VLM响应为JSON")
+                            continue
                         description = vlm_response_json.get("detailed_description", "")
                         emotions = vlm_response_json.get("keywords", [])
                         refined_description = vlm_response_json.get("refined_sentence", "")

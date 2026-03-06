@@ -333,11 +333,13 @@ class Prompt:
         # 在解析前先处理转义花括号，避免将它们误认为占位符
         processed_template = self._process_escaped_braces(template)
         # 使用正则表达式查找所有花括号内的内容
-        result = re.findall(r"\{(.*?)}", processed_template)
+        result = re.findall(r"\{(.*?)\}", processed_template)
         for expr in result:
+            # 提取变量名部分，忽略格式说明符（如 {elapsed_minutes:.1f} -> elapsed_minutes）
+            arg_name = expr.split(":")[0].split("!")[0].strip()
             # 添加到列表中，并确保唯一性
-            if expr and expr not in template_args:
-                template_args.append(expr)
+            if arg_name and arg_name not in template_args:
+                template_args.append(arg_name)
         return template_args
 
     async def build(self) -> str:
@@ -1023,7 +1025,16 @@ class Prompt:
 
             # 然后使用关键字参数对结果进行再次格式化
             if kwargs:
-                processed_template = processed_template.format(**kwargs)
+                # 过滤掉模板中不存在的关键字参数，并转义字符串值中的花括号
+                safe_kwargs = {}
+                for k, v in kwargs.items():
+                    if k in self.args:
+                        if isinstance(v, str):
+                            # 转义花括号，防止被 format 误认为嵌套占位符
+                            safe_kwargs[k] = v.replace("{", "{{").replace("}", "}}")
+                        else:
+                            safe_kwargs[k] = v
+                processed_template = processed_template.format(**safe_kwargs)
 
             # 最后，将转义花括号的临时标记还原
             result = self._restore_escaped_braces(processed_template)
