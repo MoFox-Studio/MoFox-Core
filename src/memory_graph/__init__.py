@@ -5,7 +5,7 @@
 """
 
 from src.memory_graph.manager import MemoryManager
-from src.memory_graph.models import (
+from src.memory_graph.models import (MemoryConfig,
     EdgeType,
     Memory,
     MemoryEdge,
@@ -20,7 +20,7 @@ __all__ = [
     "Memory",
     "MemoryEdge",
     "MemoryManager",
-    "MemoryNode",
+    "MemoryConfig","MemoryNode",
     "MemoryStatus",
     "MemoryType",
     "NodeType",

@@ -710,3 +710,116 @@ class ShortTermDecision:
     def __str__(self) -> str:
         return f"ShortTermDecision({self.operation.value}, target={self.target_memory_id}, confidence={self.confidence:.2f})"
 
+
+# ============================================================================
+# 统一配置
+# ============================================================================
+
+
+@dataclass
+class MemoryConfig:
+    """记忆系统总配置
+
+    聚合三层记忆系统所有参数，单一数据源。
+    通过 from_global_config() 从 TOML 配置构建。
+    """
+
+    # ---- 基础 ----
+    enabled: bool = False
+    data_dir: str = "data/memory_graph"
+
+    # ---- 感知记忆层 ----
+    perceptual_max_blocks: int = 50
+    perceptual_block_size: int = 5
+    perceptual_activation_threshold: int = 3
+    perceptual_recall_top_k: int = 5
+    perceptual_recall_threshold: float = 0.55
+
+    # ---- 短期记忆层 ----
+    short_term_max_memories: int = 30
+    short_term_transfer_threshold: float = 0.6
+    short_term_overflow_strategy: str = "transfer_all"
+    short_term_enable_force_cleanup: bool = True
+    short_term_cleanup_keep_ratio: float = 0.9
+
+    # ---- 长期记忆层 ----
+    long_term_batch_size: int = 10
+    long_term_search_top_k: int = 5
+    long_term_decay_factor: float = 0.95
+    long_term_auto_transfer_interval: int = 600
+
+    # ---- 智能检索 ----
+    judge_confidence_threshold: float = 0.7
+
+    # ---- 图存储 ----
+    vector_collection_name: str = "memory_graph"
+    search_top_k: int = 10
+    search_similarity_threshold: float = 0.5
+    path_expansion_max_hops: int = 2
+    enable_path_expansion: bool = False
+
+    @classmethod
+    def from_global_config(cls) -> "MemoryConfig":
+        """从 global_config.memory 构建 MemoryConfig"""
+        try:
+            from src.config.config import global_config
+        except ImportError:
+            return cls()
+
+        cfg = global_config.memory if global_config and global_config.memory else None
+        if cfg is None:
+            return cls()
+
+        storage_cfg = getattr(cfg, "storage", None)
+        return cls(
+            enabled=getattr(cfg, "enable", False),
+            data_dir=getattr(cfg, "data_dir", "data/memory_graph"),
+            perceptual_max_blocks=getattr(cfg, "perceptual_max_blocks", 50),
+            perceptual_block_size=getattr(cfg, "perceptual_block_size", 5),
+            perceptual_activation_threshold=getattr(cfg, "perceptual_activation_threshold", 3),
+            perceptual_recall_top_k=getattr(cfg, "perceptual_topk", 5),
+            perceptual_recall_threshold=getattr(cfg, "perceptual_similarity_threshold", 0.55),
+            short_term_max_memories=getattr(cfg, "short_term_max_memories", 30),
+            short_term_transfer_threshold=getattr(cfg, "short_term_transfer_threshold", 0.6),
+            short_term_overflow_strategy=getattr(cfg, "short_term_overflow_strategy", "transfer_all"),
+            short_term_enable_force_cleanup=getattr(cfg, "short_term_enable_force_cleanup", True),
+            short_term_cleanup_keep_ratio=getattr(cfg, "short_term_cleanup_keep_ratio", 0.9),
+            long_term_batch_size=getattr(cfg, "long_term_batch_size", 10),
+            long_term_search_top_k=getattr(cfg, "search_top_k", 5),
+            long_term_decay_factor=getattr(cfg, "long_term_decay_factor", 0.95),
+            long_term_auto_transfer_interval=getattr(cfg, "long_term_auto_transfer_interval", 600),
+            judge_confidence_threshold=getattr(cfg, "judge_confidence_threshold", 0.7),
+            vector_collection_name=getattr(storage_cfg, "vector_collection_name", "memory_graph") if storage_cfg else "memory_graph",
+            search_top_k=getattr(cfg, "search_top_k", 10),
+            search_similarity_threshold=getattr(cfg, "search_similarity_threshold", 0.5),
+            path_expansion_max_hops=getattr(cfg, "path_expansion_max_hops", 2),
+            enable_path_expansion=getattr(cfg, "enable_path_expansion", False),
+        )
+
+    def to_perceptual_kwargs(self) -> dict:
+        """提取感知记忆层初始化参数"""
+        return {
+            "max_blocks": self.perceptual_max_blocks,
+            "block_size": self.perceptual_block_size,
+            "activation_threshold": self.perceptual_activation_threshold,
+            "recall_top_k": self.perceptual_recall_top_k,
+            "recall_similarity_threshold": self.perceptual_recall_threshold,
+        }
+
+    def to_short_term_kwargs(self) -> dict:
+        """提取短期记忆层初始化参数"""
+        return {
+            "max_memories": self.short_term_max_memories,
+            "transfer_importance_threshold": self.short_term_transfer_threshold,
+            "overflow_strategy": self.short_term_overflow_strategy,
+            "enable_force_cleanup": self.short_term_enable_force_cleanup,
+            "cleanup_keep_ratio": self.short_term_cleanup_keep_ratio,
+        }
+
+    def to_long_term_kwargs(self) -> dict:
+        """提取长期记忆层初始化参数"""
+        return {
+            "batch_size": self.long_term_batch_size,
+            "search_top_k": self.long_term_search_top_k,
+            "long_term_decay_factor": self.long_term_decay_factor,
+        }

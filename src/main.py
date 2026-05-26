@@ -481,17 +481,7 @@ class MainSystem:
         except Exception as e:
             logger.error(f"记忆图系统初始化失败: {e}")
 
-        # 初始化三层记忆系统（如果启用）
-        try:
-            if global_config and global_config.memory and global_config.memory.enable:
-                from src.memory_graph.manager_singleton import initialize_unified_memory_manager
-                logger.debug("三层记忆系统已启用，正在初始化...")
-                await initialize_unified_memory_manager()
-                logger.debug("三层记忆系统初始化成功")
-            else:
-                logger.debug("三层记忆系统未启用（配置中禁用）")
-        except Exception as e:
-            logger.error(f"三层记忆系统初始化失败: {e}")
+        # 三层记忆系统已由 initialize_memory_manager 内部初始化
 
         # 初始化LPMM知识库
         try:
