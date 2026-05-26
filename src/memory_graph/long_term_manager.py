@@ -62,6 +62,14 @@ class LongTermMemoryManager:
         self._pending_embeddings: list[tuple[str, str]] = []  # (node_id, content)
         self._embedding_batch_size = 10
         self._embedding_lock = asyncio.Lock()
+        self._failed_embedding_nodes: set[str] = set()  # 记录失败的节点ID，避免重复尝试
+        self._embedding_batch_retry_limit = 2
+        self._embedding_single_retry_limit = 2
+        self._embedding_failure_threshold = 3
+        self._embedding_consecutive_failures = 0
+        self._embedding_cooldown_seconds = 5.0
+        self._embedding_cooldown_until: float | None = None
+        self._embedding_failed_count = 0
 
         # 相似记忆缓存 (stm_id -> memories)
         self._similar_memory_cache: dict[str, list[Memory]] = {}
@@ -185,7 +193,16 @@ class LongTermMemoryManager:
         }
 
         # 并行处理批次中的所有记忆
-        tasks = [self._process_single_memory(stm) for stm in batch]
+        # 从配置获取最大并发LLM调用数
+        max_concurrent = getattr(self.memory_manager.config, "max_concurrent_llm_calls", 3) if self.memory_manager.config else 3
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def _process_with_limit(stm: ShortTermMemory):
+            """带信号量限制的单记忆处理"""
+            async with semaphore:
+                return await self._process_single_memory(stm)
+
+        tasks = [_process_with_limit(stm) for stm in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 汇总结果
@@ -241,8 +258,8 @@ class LongTermMemoryManager:
                 extraction = await self._extract_structured_memory(stm, similar_memories)
 
                 # 步骤3: 执行 CRUD
-                action = extraction.get("action", "create")
                 memory_id = await self._upsert_long_term_memory(extraction, stm)
+                action = extraction.get("action", "create")  # 回退时 _upsert 会更新为 "create"
 
                 if memory_id:
                     return {
@@ -294,7 +311,7 @@ class LongTermMemoryManager:
                 query=stm.content,
                 top_k=self.search_top_k,
                 include_forgotten=False,
-                use_multi_query=False,  # 不使用多查询，避免过度扩展
+                use_multi_query=getattr(global_config.memory, "use_multi_query", True),  # 从配置读取，默认启用多查询
                 expand_depth=expand_depth
             )
 
@@ -568,6 +585,7 @@ class LongTermMemoryManager:
                     logger.warning(f"{action} 失败，目标记忆不存在: {target_id}，回退为 create")
                     # 回退为创建
                     action = "create"
+                    extraction["action"] = "create"
 
             if action == "create" or (action in ("update", "merge") and not target_id):
                 # 创建新记忆
@@ -593,6 +611,15 @@ class LongTermMemoryManager:
             logger.error(f"_upsert_long_term_memory 失败: {e}")
             return None
 
+
+    def _in_embedding_cooldown(self) -> bool:
+        """检查是否在 embedding 冷却期内"""
+        return self._embedding_cooldown_until is not None and datetime.now().timestamp() < self._embedding_cooldown_until
+
+    def _enter_embedding_cooldown(self) -> None:
+        """进入 embedding 冷却期"""
+        self._embedding_cooldown_until = datetime.now().timestamp() + self._embedding_cooldown_seconds
+
     async def _queue_embedding_generation(self, node_id: str, content: str) -> None:
         """将节点加入embedding生成队列"""
         # 先在锁内写入，再在锁外触发批量处理，避免自锁
@@ -613,6 +640,13 @@ class LongTermMemoryManager:
 
             batch = self._pending_embeddings[:]
             self._pending_embeddings.clear()
+
+        # 检查是否在冷却期
+        if self._in_embedding_cooldown():
+            cooldown_left = self._embedding_cooldown_until - datetime.now().timestamp()
+            logger.debug(f"embedding 冷却中，跳过 {len(batch)} 个节点 (剩余 {cooldown_left:.1f}s)")
+            return
+
 
         if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
             return
@@ -661,24 +695,56 @@ class LongTermMemoryManager:
                 await self._generate_node_embedding_single(node_id, content)
 
     async def _generate_node_embedding_single(self, node_id: str, content: str) -> None:
-        """为单个节点生成 embedding 并存入向量库（回退方法）"""
+        """为单个节点生成 embedding 并存入向量库（带回退 + 重试）"""
         try:
             if not self.memory_manager.vector_store or not self.memory_manager.embedding_generator:
                 return
 
-            embedding = await self.memory_manager.embedding_generator.generate(content)
-            if embedding is not None:
-                from src.memory_graph.models import MemoryNode, NodeType
-                node = MemoryNode(
-                    id=node_id,
-                    content=content,
-                    node_type=NodeType.OBJECT,
-                    embedding=embedding
-                )
-                await self.memory_manager.vector_store.add_node(node)
-                node.mark_vector_stored()
-                if self.memory_manager.graph_store.graph.has_node(node_id):
-                    self.memory_manager.graph_store.graph.nodes[node_id]["has_vector"] = True
+            # 跳过已知失败节点
+            if node_id in self._failed_embedding_nodes:
+                logger.debug(f"跳过已知失败的embedding节点: {node_id}")
+                return
+
+            for attempt in range(1, self._embedding_single_retry_limit + 1):
+                try:
+                    embedding = await self.memory_manager.embedding_generator.generate(content)
+                    if embedding is not None:
+                        from src.memory_graph.models import MemoryNode, NodeType
+                        node = MemoryNode(
+                            id=node_id,
+                            content=content,
+                            node_type=NodeType.OBJECT,
+                            embedding=embedding
+                        )
+                        await self.memory_manager.vector_store.add_node(node)
+                        node.mark_vector_stored()
+                        if self.memory_manager.graph_store.graph.has_node(node_id):
+                            self.memory_manager.graph_store.graph.nodes[node_id]["has_vector"] = True
+                        self._embedding_consecutive_failures = 0
+                        self._embedding_cooldown_until = None
+                        return
+                    else:
+                        logger.debug(f"节点 {node_id} embedding 生成返回 None")
+                        self._failed_embedding_nodes.add(node_id)
+                        self._embedding_failed_count += 1
+                        return
+                except Exception as e:
+                    self._embedding_consecutive_failures += 1
+                    if attempt < self._embedding_single_retry_limit:
+                        backoff = 0.5 * attempt
+                        logger.warning(
+                            f"生成节点 {node_id} embedding 失败，重试 {attempt}/{self._embedding_single_retry_limit}，等待 {backoff}s: {e}"
+                        )
+                        await asyncio.sleep(backoff)
+                    else:
+                        logger.error(f"生成节点 {node_id} embedding 最终失败: {e}")
+                        self._failed_embedding_nodes.add(node_id)
+                        self._embedding_failed_count += 1
+                        if self._embedding_consecutive_failures >= self._embedding_failure_threshold:
+                            self._enter_embedding_cooldown()
+                            logger.warning(
+                                f"embedding生成连续失败 {self._embedding_consecutive_failures} 次，进入 {self._embedding_cooldown_seconds}s 冷却期"
+                            )
         except Exception as e:
             logger.warning(f"生成节点 embedding 失败: {e}")
 
@@ -762,6 +828,9 @@ class LongTermMemoryManager:
         stats = self.memory_manager.get_statistics()
         stats["decay_factor"] = self.long_term_decay_factor
         stats["batch_size"] = self.batch_size
+        stats["failed_embedding_nodes"] = len(self._failed_embedding_nodes)
+        stats["embedding_consecutive_failures"] = self._embedding_consecutive_failures
+        stats["embedding_cooldown_until"] = self._embedding_cooldown_until
 
         return stats
 
@@ -777,6 +846,11 @@ class LongTermMemoryManager:
             await self._flush_pending_embeddings()
 
             # 清空缓存
+            # 记录 embedding 失败统计
+            if self._failed_embedding_nodes or self._embedding_failed_count:
+                logger.warning(
+                    f"embedding 失败统计: 失败节点数={len(self._failed_embedding_nodes)}, 累计失败={self._embedding_failed_count}"
+                )
             self._similar_memory_cache.clear()
 
             # 长期记忆的保存由 MemoryManager 负责

@@ -45,7 +45,7 @@ async def initialize_memory_manager(
     """
     global _memory_manager, _initialized
 
-    unified = await initialize_unified_memory_manager()
+    unified = await initialize_unified_memory_manager(data_dir=data_dir)
     if unified is None:
         _initialized = False
         _memory_manager = None
@@ -96,16 +96,19 @@ def is_initialized() -> bool:
 # ============================================================================
 
 
-async def initialize_unified_memory_manager():
+async def initialize_unified_memory_manager(data_dir: Path | str | None = None):
+
     """
     初始化统一记忆管理器（三层记忆系统）
 
     从全局配置读取参数
 
+    Args:
+        data_dir: 数据目录（可选，默认从配置读取）
+
     Returns:
         初始化后的管理器实例，未启用返回 None
     """
-    global _unified_memory_manager
 
     if _unified_memory_manager is not None:
         logger.warning("统一记忆管理器已经初始化")
@@ -130,7 +133,7 @@ async def initialize_unified_memory_manager():
         # 创建管理器实例
         # 注意：我们将 data_dir 指向 three_tier 子目录，以隔离感知/短期记忆数据
         # 同时传入全局 _memory_manager 以共享长期记忆图存储
-        base_data_dir = Path(getattr(config, "data_dir", "data/memory_graph"))
+        base_data_dir = Path(data_dir) if data_dir else Path(getattr(config, "data_dir", "data/memory_graph"))
 
         from src.memory_graph.models import MemoryConfig
 
