@@ -1197,73 +1197,6 @@ class MemoryManager:
             max_batch_size=max_batch_size
         )
 
-    # ==================== 以下方法已废弃 ====================
-    # 旧的记忆整理逻辑（去重、自动关联等）已由三级记忆系统取代
-    # 保留方法签名用于向后兼容，但不再执行复杂操作
-
-    async def auto_link_memories(  # 已废弃
-        self,
-        time_window_hours: float | None = None,
-        max_candidates: int | None = None,
-        min_confidence: float | None = None,
-    ) -> dict[str, Any]:
-        """
-        自动关联记忆（已废弃）
-
-        该功能已由三级记忆系统取代。记忆之间的关联现在通过模型自动处理。
-
-        Args:
-            time_window_hours: 分析时间窗口（小时）
-            max_candidates: 每个记忆最多关联的候选数
-            min_confidence: 最低置信度阈值
-
-        Returns:
-            空结果（向后兼容）
-        """
-        logger.warning("auto_link_memories 已废弃，记忆关联由三级记忆系统自动处理")
-        return {"checked_count": 0, "linked_count": 0, "deprecated": True}
-
-    async def _find_link_candidates(  # 已废弃
-        self,
-        memory: Memory,
-        exclude_ids: set[str],
-        max_results: int = 5,
-    ) -> list[Memory]:
-        """
-        为记忆寻找关联候选（已废弃）
-
-        该功能已由三级记忆系统取代。
-        """
-        logger.warning("_find_link_candidates 已废弃")
-        return []
-
-    async def _analyze_memory_relations(  # 已废弃
-        self,
-        source_memory: Memory,
-        candidate_memories: list[Memory],
-        min_confidence: float = 0.7,
-    ) -> list[dict[str, Any]]:
-        """
-        使用LLM分析记忆之间的关系（已废弃）
-
-        该功能已由三级记忆系统取代。
-
-        Args:
-            source_memory: 源记忆
-            candidate_memories: 候选记忆列表
-            min_confidence: 最低置信度
-
-        Returns:
-            空列表（向后兼容）
-        """
-        logger.warning("_analyze_memory_relations 已废弃")
-        return []
-
-    def _format_memory_for_llm(self, memory: Memory) -> str:  # 已废弃
-        """格式化记忆为LLM可读的文本（已废弃）"""
-        logger.warning("_format_memory_for_llm 已废弃")
-        return f"记忆ID: {memory.id}"
-
     async def maintenance(self) -> dict[str, Any]:
         """
         执行维护任务（简化版）
@@ -1318,46 +1251,6 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"维护失败: {e}")
             return {"error": str(e), "total_time": 0}
-
-    async def _lightweight_auto_link_memories(  # 已废弃
-        self,
-        time_window_hours: float | None = None,
-        max_candidates: int | None = None,
-        max_memories: int | None = None,
-    ) -> dict[str, Any]:
-        """
-        智能轻量级自动关联记忆（已废弃）
-
-        该功能已由三级记忆系统取代。
-
-        Args:
-            time_window_hours: 从配置读取
-            max_candidates: 从配置读取
-            max_memories: 从配置读取
-
-        Returns:
-            空结果（向后兼容）
-        """
-        logger.warning("_lightweight_auto_link_memories 已废弃")
-        return {"checked_count": 0, "linked_count": 0, "deprecated": True}
-
-    async def _batch_analyze_memory_relations(  # 已废弃
-        self,
-        candidate_pairs: list[tuple[Memory, Memory, float]]
-    ) -> list[dict[str, Any]]:
-        """
-        批量分析记忆关系（已废弃）
-
-        该功能已由三级记忆系统取代。
-
-        Args:
-            candidate_pairs: 候选记忆对列表
-
-        Returns:
-            空列表（向后兼容）
-        """
-        logger.warning("_batch_analyze_memory_relations 已废弃")
-        return []
 
     def _start_maintenance_task(self) -> None:
         """

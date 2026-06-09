@@ -1,4 +1,11 @@
-# Todo: 重构Action,这里现在只剩下了报错。
+"""Action 组件基类
+
+Action 是插件的一种组件类型，用于处理聊天中的动作逻辑。
+
+激活机制：推荐通过重写 go_activate() 方法来自定义激活逻辑。
+旧版类属性激活方式 (focus_activation_type 等) 已弃用但仍然兼容。
+"""
+
 import asyncio
 import random
 import time
@@ -506,7 +513,7 @@ class BaseAction(ABC):
 
             # 4. 执行Action
             logger.debug(f"{log_prefix} 开始执行...")
-            execute_result = await action_instance.execute()  # Todo: 修复类型错误
+            execute_result = await action_instance.execute()
             # 确保返回类型符合 (bool, str) 格式
             is_success = execute_result[0] if isinstance(execute_result, tuple) and len(execute_result) > 0 else False
             message = execute_result[1] if isinstance(execute_result, tuple) and len(execute_result) > 1 else ""
