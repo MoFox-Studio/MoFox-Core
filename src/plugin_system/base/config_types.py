@@ -219,5 +219,3 @@ def compare_config_sections(
                 result["removed"].append(f"{section_name}.{field_name}")
 
     return result
-
->>>>>>> 1d4fa4595 (feat: 修复关键bug + 移植Neo-MoFox组件)
