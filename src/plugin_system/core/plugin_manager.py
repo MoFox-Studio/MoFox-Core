@@ -561,6 +561,12 @@ class PluginManager:
                         if router_components:
                             router_details = [format_component(c) for c in router_components]
                             logger.info(f"    🌐 Router组件: {', '.join(router_details)}")
+                        service_components = [
+                            c for c in plugin_info.components if c.component_type == ComponentType.SERVICE
+                        ]
+                        if service_components:
+                            service_details = [format_component(c) for c in service_components]
+                            logger.info(f"    🔧 Service组件: {', '.join(service_details)}")
                         if adapter_components:
                             adapter_details = [format_component(c) for c in adapter_components]
                             logger.info(f"    🔌 Adapter组件: {', '.join(adapter_details)}")

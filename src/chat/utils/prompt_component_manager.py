@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 import re
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from src.chat.utils.prompt_params import PromptParameters
 from src.common.logger import get_logger
-from src.plugin_system.base.base_prompt import BasePrompt
-from src.plugin_system.base.component_types import ComponentType, InjectionRule, InjectionType, PromptInfo
-from src.plugin_system.core.component_registry import component_registry
+
+if TYPE_CHECKING:
+    from src.plugin_system.base.base_prompt import BasePrompt
+    from src.plugin_system.base.component_types import ComponentType, InjectionRule, InjectionType, PromptInfo
+    from src.plugin_system.core.component_registry import component_registry
 
 logger = get_logger("prompt_component_manager")
 
@@ -43,16 +48,14 @@ class PromptComponentManager:
     # --- 核心生命周期与初始化 ---
 
     def load_static_rules(self):
-        """
-        在系统启动时加载所有静态注入规则。
-
-        该方法会扫描所有已在 `component_registry` 中注册并启用的 Prompt 组件，
-        将其类变量 `injection_rules` 转换为管理器的动态规则。
-        这确保了所有插件定义的默认注入行为在系统启动时就能生效。
-        此操作是幂等的，一旦初始化完成就不会重复执行。
-        """
+        """..."""
         if self._initialized:
             return
+
+        from src.plugin_system.base.base_prompt import BasePrompt  # noqa: F811 - 延迟导入打破循环依赖
+        from src.plugin_system.base.component_types import ComponentType, PromptInfo  # noqa: F811
+        from src.plugin_system.core.component_registry import component_registry  # noqa: F811
+
         logger.info("正在加载静态 Prompt 注入规则...")
 
         # 从组件注册表中获取所有已启用的 Prompt 组件

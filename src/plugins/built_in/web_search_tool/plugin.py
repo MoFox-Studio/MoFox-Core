@@ -97,13 +97,13 @@ class WEBSEARCHPLUGIN(BasePlugin):
         },
         "proxy": {
             "http_proxy": ConfigField(
-                type=str, default=None, description="HTTP代理地址，格式如: http://proxy.example.com:8080"
+                type=str, default="", description="HTTP代理地址，格式如: http://proxy.example.com:8080"
             ),
             "https_proxy": ConfigField(
-                type=str, default=None, description="HTTPS代理地址，格式如: http://proxy.example.com:8080"
+                type=str, default="", description="HTTPS代理地址，格式如: http://proxy.example.com:8080"
             ),
             "socks5_proxy": ConfigField(
-                type=str, default=None, description="SOCKS5代理地址，格式如: socks5://proxy.example.com:1080"
+                type=str, default="", description="SOCKS5代理地址，格式如: socks5://proxy.example.com:1080"
             ),
             "enable_proxy": ConfigField(type=bool, default=False, description="是否启用代理"),
         },

@@ -50,6 +50,7 @@ class ComponentType(Enum):
     CHATTER = "chatter"  # 聊天处理器组件
     PROMPT = "prompt"  # Prompt组件
     ROUTER = "router"  # 路由组件
+    SERVICE = "service"  # 服务组件（插件间服务调用）
     ADAPTER = "adapter"  # 适配器组件
 
     def __str__(self) -> str:

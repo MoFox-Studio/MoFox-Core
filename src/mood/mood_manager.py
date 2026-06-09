@@ -3,7 +3,6 @@ import random
 import time
 
 from src.chat.utils.chat_message_builder import build_readable_messages, get_raw_msg_by_timestamp_with_chat_inclusive
-from src.chat.utils.prompt import Prompt, global_prompt_manager
 from src.common.data_models.database_data_model import DatabaseMessages
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
@@ -14,6 +13,8 @@ logger = get_logger("mood")
 
 
 def init_prompt():
+    from src.chat.utils.prompt import Prompt  # noqa: F811 - 延迟导入以打破循环依赖
+
     Prompt(
         """
 {chat_talking_prompt}

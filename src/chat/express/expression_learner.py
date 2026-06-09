@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.chat.utils.chat_message_builder import build_anonymous_messages, get_raw_msg_by_timestamp_with_chat_inclusive
-from src.chat.utils.prompt import Prompt, global_prompt_manager
 from src.common.database.api.crud import CRUDBase
 from src.common.database.compatibility import get_db_session
 from src.common.database.core.models import Expression
@@ -40,6 +39,8 @@ def format_create_date(timestamp: float) -> str:
 
 
 def init_prompt() -> None:
+    from src.chat.utils.prompt import Prompt  # noqa: F811 - 延迟导入以打破循环依赖
+
     learn_style_prompt = """
 {chat_str}
 
