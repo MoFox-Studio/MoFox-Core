@@ -1,6 +1,6 @@
 """inkfox.memory submodule type stubs"""
-from __future__ import annotations
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 class PyMetadataIndex:
     def __init__(self, path: str | None = None) -> None: ...

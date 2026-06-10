@@ -4,9 +4,9 @@
 提供统一的消息格式构建功能
 """
 
-from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class MessageRole(Enum):
@@ -23,8 +23,8 @@ class TextContent:
     """文本内容"""
     type: str = "text"
     text: str = ""
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         return {"type": self.type, "text": self.text}
 
 
@@ -32,9 +32,9 @@ class TextContent:
 class ImageContent:
     """图片内容"""
     type: str = "image_url"
-    image_url: Union[str, Dict[str, str]] = ""
-    
-    def to_dict(self) -> Dict[str, Any]:
+    image_url: str | dict[str, str] = ""
+
+    def to_dict(self) -> dict[str, Any]:
         if isinstance(self.image_url, str):
             return {
                 "type": self.type,
@@ -51,9 +51,9 @@ class MessageBuilder:
     
     提供便捷的方法构建标准格式的消息
     """
-    
+
     @staticmethod
-    def create_system_message(content: str) -> Dict[str, str]:
+    def create_system_message(content: str) -> dict[str, str]:
         """创建系统消息
         
         Args:
@@ -66,12 +66,12 @@ class MessageBuilder:
             "role": MessageRole.SYSTEM.value,
             "content": content
         }
-    
+
     @staticmethod
     def create_user_message(
-        content: Union[str, List[Union[TextContent, ImageContent, Dict]]],
-        name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        content: str | list[TextContent | ImageContent | dict],
+        name: str | None = None
+    ) -> dict[str, Any]:
         """创建用户消息
         
         Args:
@@ -81,10 +81,10 @@ class MessageBuilder:
         Returns:
             Dict: 标准格式的用户消息
         """
-        message: Dict[str, Any] = {
+        message: dict[str, Any] = {
             "role": MessageRole.USER.value
         }
-        
+
         # 处理内容
         if isinstance(content, str):
             message["content"] = content
@@ -99,19 +99,19 @@ class MessageBuilder:
                 else:
                     raise ValueError(f"Unsupported content type: {type(item)}")
             message["content"] = formatted_content
-        
+
         if name:
             message["name"] = name
-        
+
         return message
-    
+
     @staticmethod
     def create_assistant_message(
-        content: Optional[str] = None,
-        tool_calls: Optional[List[Dict[str, Any]]] = None,
-        function_call: Optional[Dict[str, Any]] = None,
-        name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        content: str | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        function_call: dict[str, Any] | None = None,
+        name: str | None = None
+    ) -> dict[str, Any]:
         """创建助手消息
         
         Args:
@@ -123,30 +123,30 @@ class MessageBuilder:
         Returns:
             Dict: 标准格式的助手消息
         """
-        message: Dict[str, Any] = {
+        message: dict[str, Any] = {
             "role": MessageRole.ASSISTANT.value
         }
-        
+
         if content is not None:
             message["content"] = content
-        
+
         if tool_calls:
             message["tool_calls"] = tool_calls
-        
+
         if function_call:
             message["function_call"] = function_call
-        
+
         if name:
             message["name"] = name
-        
+
         return message
-    
+
     @staticmethod
     def create_tool_message(
         tool_call_id: str,
         content: str,
-        name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        name: str | None = None
+    ) -> dict[str, Any]:
         """创建工具响应消息
         
         Args:
@@ -157,22 +157,22 @@ class MessageBuilder:
         Returns:
             Dict: 标准格式的工具消息
         """
-        message: Dict[str, Any] = {
+        message: dict[str, Any] = {
             "role": MessageRole.TOOL.value,
             "tool_call_id": tool_call_id,
             "content": content
         }
-        
+
         if name:
             message["name"] = name
-        
+
         return message
-    
+
     @staticmethod
     def create_function_message(
         name: str,
         content: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """创建函数响应消息（已弃用，使用create_tool_message）
         
         Args:
@@ -187,13 +187,13 @@ class MessageBuilder:
             "name": name,
             "content": content
         }
-    
+
     @staticmethod
     def create_multimodal_message(
-        text: Optional[str] = None,
-        images: Optional[List[str]] = None,
+        text: str | None = None,
+        images: list[str] | None = None,
         role: MessageRole = MessageRole.USER
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """创建多模态消息（包含文本和图片）
         
         Args:
@@ -205,25 +205,25 @@ class MessageBuilder:
             Dict: 标准格式的多模态消息
         """
         content = []
-        
+
         if text:
             content.append(TextContent(text=text).to_dict())
-        
+
         if images:
             for image_url in images:
                 content.append(ImageContent(image_url=image_url).to_dict())
-        
+
         return {
             "role": role.value,
             "content": content
         }
-    
+
     @staticmethod
     def format_conversation(
-        system: Optional[str] = None,
-        messages: Optional[List[Dict[str, Any]]] = None,
-        user_message: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        system: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        user_message: str | None = None
+    ) -> list[dict[str, Any]]:
         """格式化完整对话
         
         Args:
@@ -235,20 +235,20 @@ class MessageBuilder:
             List[Dict]: 格式化的消息列表
         """
         formatted = []
-        
+
         if system:
             formatted.append(MessageBuilder.create_system_message(system))
-        
+
         if messages:
             formatted.extend(messages)
-        
+
         if user_message:
             formatted.append(MessageBuilder.create_user_message(user_message))
-        
+
         return formatted
-    
+
     @staticmethod
-    def validate_message(message: Dict[str, Any]) -> bool:
+    def validate_message(message: dict[str, Any]) -> bool:
         """验证消息格式
         
         Args:
@@ -260,21 +260,21 @@ class MessageBuilder:
         # 必须有 role 字段
         if "role" not in message:
             return False
-        
+
         # 验证 role 值
         valid_roles = [r.value for r in MessageRole]
         if message["role"] not in valid_roles:
             return False
-        
+
         # 大多数消息需要 content 字段（除了带 tool_calls 的 assistant 消息）
         if message["role"] != MessageRole.ASSISTANT.value:
             if "content" not in message:
                 return False
-        
+
         return True
-    
+
     @staticmethod
-    def count_tokens_estimate(messages: List[Dict[str, Any]]) -> int:
+    def count_tokens_estimate(messages: list[dict[str, Any]]) -> int:
         """粗略估算消息列表的token数
         
         Args:
@@ -284,12 +284,12 @@ class MessageBuilder:
             int: 估算的token数
         """
         from ..utils import estimate_tokens
-        
+
         total = 0
         for message in messages:
             # 角色标记 ~4 tokens
             total += 4
-            
+
             # 内容
             if isinstance(message.get("content"), str):
                 total += estimate_tokens(message["content"])
@@ -300,10 +300,10 @@ class MessageBuilder:
                     elif item.get("type") == "image_url":
                         # 图片约 85-170 tokens，取中间值
                         total += 128
-            
+
             # 工具调用
             if "tool_calls" in message:
                 # 每个工具调用约 ~10 tokens
                 total += len(message["tool_calls"]) * 10
-        
+
         return total

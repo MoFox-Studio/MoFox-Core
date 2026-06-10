@@ -4,10 +4,10 @@
 提供函数调用和工具调用的标准格式构建
 """
 
-from typing import List, Dict, Any, Optional, Union, Literal
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-import json
+from typing import Any, Literal
 
 
 class ToolType(Enum):
@@ -33,30 +33,30 @@ class Parameter:
     type: ParameterType
     description: str
     required: bool = False
-    enum: Optional[List[Any]] = None
-    items: Optional[Dict[str, Any]] = None  # 用于 array 类型
-    properties: Optional[Dict[str, Any]] = None  # 用于 object 类型
-    default: Optional[Any] = None
-    
-    def to_schema(self) -> Dict[str, Any]:
+    enum: list[Any] | None = None
+    items: dict[str, Any] | None = None  # 用于 array 类型
+    properties: dict[str, Any] | None = None  # 用于 object 类型
+    default: Any | None = None
+
+    def to_schema(self) -> dict[str, Any]:
         """转换为 JSON Schema 格式"""
         schema = {
             "type": self.type.value,
             "description": self.description
         }
-        
+
         if self.enum:
             schema["enum"] = self.enum
-        
+
         if self.items:
             schema["items"] = self.items
-        
+
         if self.properties:
             schema["properties"] = self.properties
-        
+
         if self.default is not None:
             schema["default"] = self.default
-        
+
         return schema
 
 
@@ -65,27 +65,27 @@ class FunctionDefinition:
     """函数定义"""
     name: str
     description: str
-    parameters: List[Parameter] = field(default_factory=list)
-    
-    def to_dict(self) -> Dict[str, Any]:
+    parameters: list[Parameter] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典格式"""
         # 构建 parameters schema
         properties = {}
         required = []
-        
+
         for param in self.parameters:
             properties[param.name] = param.to_schema()
             if param.required:
                 required.append(param.name)
-        
+
         parameters_schema = {
             "type": "object",
             "properties": properties
         }
-        
+
         if required:
             parameters_schema["required"] = required
-        
+
         return {
             "name": self.name,
             "description": self.description,
@@ -97,9 +97,9 @@ class FunctionDefinition:
 class ToolDefinition:
     """工具定义（OpenAI 风格）"""
     type: str = "function"  # 目前只支持 "function"
-    function: Optional[FunctionDefinition] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
+    function: FunctionDefinition | None = None
+
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典格式"""
         result = {"type": self.type}
         if self.function:
@@ -112,13 +112,13 @@ class ToolBuilder:
     
     提供便捷的方法构建工具定义
     """
-    
+
     @staticmethod
     def create_function(
         name: str,
         description: str,
-        parameters: Optional[List[Parameter]] = None
-    ) -> Dict[str, Any]:
+        parameters: list[Parameter] | None = None
+    ) -> dict[str, Any]:
         """创建函数定义
         
         Args:
@@ -135,13 +135,13 @@ class ToolBuilder:
             parameters=parameters or []
         )
         return func_def.to_dict()
-    
+
     @staticmethod
     def create_tool(
         name: str,
         description: str,
-        parameters: Optional[List[Parameter]] = None
-    ) -> Dict[str, Any]:
+        parameters: list[Parameter] | None = None
+    ) -> dict[str, Any]:
         """创建工具定义（OpenAI 风格）
         
         Args:
@@ -159,11 +159,11 @@ class ToolBuilder:
         )
         tool_def = ToolDefinition(function=func_def)
         return tool_def.to_dict()
-    
+
     @staticmethod
     def create_parameter(
         name: str,
-        param_type: Union[ParameterType, str],
+        param_type: ParameterType | str,
         description: str,
         required: bool = False,
         **kwargs
@@ -182,7 +182,7 @@ class ToolBuilder:
         """
         if isinstance(param_type, str):
             param_type = ParameterType(param_type)
-        
+
         return Parameter(
             name=name,
             type=param_type,
@@ -190,11 +190,11 @@ class ToolBuilder:
             required=required,
             **kwargs
         )
-    
+
     @staticmethod
     def create_tool_choice(
-        choice: Union[Literal["auto", "none"], str, Dict[str, Any]]
-    ) -> Union[str, Dict[str, Any]]:
+        choice: Literal["auto", "none"] | str | dict[str, Any]
+    ) -> str | dict[str, Any]:
         """创建工具选择策略
         
         Args:
@@ -218,13 +218,13 @@ class ToolBuilder:
                 "type": "function",
                 "function": {"name": choice}
             }
-    
+
     @staticmethod
     def create_tool_call(
         tool_call_id: str,
         function_name: str,
-        arguments: Union[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        arguments: str | dict[str, Any]
+    ) -> dict[str, Any]:
         """创建工具调用对象
         
         Args:
@@ -237,7 +237,7 @@ class ToolBuilder:
         """
         if isinstance(arguments, dict):
             arguments = json.dumps(arguments, ensure_ascii=False)
-        
+
         return {
             "id": tool_call_id,
             "type": "function",
@@ -246,9 +246,9 @@ class ToolBuilder:
                 "arguments": arguments
             }
         }
-    
+
     @staticmethod
-    def parse_tool_call_arguments(arguments: str) -> Dict[str, Any]:
+    def parse_tool_call_arguments(arguments: str) -> dict[str, Any]:
         """解析工具调用参数
         
         Args:
@@ -261,13 +261,13 @@ class ToolBuilder:
             json.JSONDecodeError: 解析失败
         """
         return json.loads(arguments)
-    
+
     @staticmethod
     def from_python_function(
         func: callable,
-        name: Optional[str] = None,
-        description: Optional[str] = None
-    ) -> Dict[str, Any]:
+        name: str | None = None,
+        description: str | None = None
+    ) -> dict[str, Any]:
         """从 Python 函数创建工具定义
         
         注意：需要函数有适当的类型注解和文档字符串
@@ -281,19 +281,19 @@ class ToolBuilder:
             Dict: 工具定义
         """
         import inspect
-        
+
         # 获取函数名和描述
         tool_name = name or func.__name__
-        tool_desc = description or (func.__doc__ or "").strip().split('\n')[0]
-        
+        tool_desc = description or (func.__doc__ or "").strip().split("\n")[0]
+
         # 获取函数签名
         sig = inspect.signature(func)
         parameters = []
-        
+
         for param_name, param in sig.parameters.items():
-            if param_name == 'self':
+            if param_name == "self":
                 continue
-            
+
             # 推断类型
             param_type = ParameterType.STRING  # 默认
             if param.annotation != inspect.Parameter.empty:
@@ -307,15 +307,15 @@ class ToolBuilder:
                     param_type = ParameterType.ARRAY
                 elif param.annotation == dict:
                     param_type = ParameterType.OBJECT
-            
+
             # 判断是否必需
             required = param.default == inspect.Parameter.empty
-            
+
             parameters.append(Parameter(
                 name=param_name,
                 type=param_type,
                 description=f"Parameter {param_name}",
                 required=required
             ))
-        
+
         return ToolBuilder.create_tool(tool_name, tool_desc, parameters)

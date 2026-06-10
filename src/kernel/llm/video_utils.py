@@ -5,8 +5,13 @@
 """
 
 import os
-from typing import Dict, Optional, Any
-from kernel.logger import get_logger
+from typing import Any
+
+try:
+    from src.common.logger import get_logger
+except ImportError:
+    import logging
+    get_logger = logging.getLogger
 
 logger = get_logger(__name__)
 
@@ -23,10 +28,10 @@ except ImportError as e:
 
 class VideoKeyframeExtractor:
     """视频关键帧提取器（inkfox 封装）"""
-    
+
     def __init__(
         self,
-        ffmpeg_path: Optional[str] = None,
+        ffmpeg_path: str | None = None,
         threads: int = 0,
         verbose: bool = False
     ):
@@ -45,27 +50,27 @@ class VideoKeyframeExtractor:
                 "inkfox 视频处理模块不可用，请安装 inkfox: "
                 "pip install inkfox"
             )
-        
+
         self._extractor = video.VideoKeyframeExtractor(  # type: ignore
             ffmpeg_path=ffmpeg_path or "",
             threads=threads,
             verbose=verbose
         )
-        
+
         logger.info(
             "视频关键帧提取器初始化完成 (线程数=%d)",
             self._extractor.get_configured_threads()
         )
-    
+
     def extract_keyframes(
         self,
         video_path: str,
         output_dir: str,
         max_keyframes: int = 10,
-        max_save: Optional[int] = None,
-        use_simd: Optional[bool] = None,
-        block_size: Optional[int] = None
-    ) -> Dict[str, Any]:
+        max_save: int | None = None,
+        use_simd: bool | None = None,
+        block_size: int | None = None
+    ) -> dict[str, Any]:
         """提取视频关键帧
         
         Args:
@@ -85,17 +90,17 @@ class VideoKeyframeExtractor:
         """
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"视频文件不存在: {video_path}")
-        
+
         # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)
-        
+
         try:
             logger.info("开始提取视频关键帧: %s", video_path)
             logger.debug(
                 "参数: max_keyframes=%d, max_save=%s, use_simd=%s",
                 max_keyframes, max_save, use_simd
             )
-            
+
             # 调用 inkfox 提取关键帧
             result = self._extractor.process_video(
                 video_path=video_path,
@@ -105,31 +110,31 @@ class VideoKeyframeExtractor:
                 use_simd=use_simd,
                 block_size=block_size
             )
-            
+
             # 转换结果为字典
             result_dict = result.to_dict()
-            
+
             logger.info(
                 "关键帧提取完成: 总帧数=%d, 关键帧数=%d, 处理速度=%.2f FPS",
-                result_dict['total_frames'],
-                result_dict['keyframes_extracted'],
-                result_dict['processing_fps']
+                result_dict["total_frames"],
+                result_dict["keyframes_extracted"],
+                result_dict["processing_fps"]
             )
-            
+
             return result_dict
-            
+
         except Exception as e:
             logger.error("关键帧提取失败: %s", e)
             raise RuntimeError(f"Failed to extract keyframes: {e}") from e
-    
+
     def benchmark(
         self,
         video_path: str,
         max_keyframes: int = 10,
         test_name: str = "default",
-        use_simd: Optional[bool] = None,
-        block_size: Optional[int] = None
-    ) -> Dict[str, Any]:
+        use_simd: bool | None = None,
+        block_size: int | None = None
+    ) -> dict[str, Any]:
         """性能基准测试
         
         Args:
@@ -144,7 +149,7 @@ class VideoKeyframeExtractor:
         """
         try:
             logger.info("开始性能测试: %s", test_name)
-            
+
             result = self._extractor.benchmark(
                 video_path=video_path,
                 max_keyframes=max_keyframes,
@@ -152,30 +157,30 @@ class VideoKeyframeExtractor:
                 use_simd=use_simd,
                 block_size=block_size
             )
-            
+
             result_dict = result.to_dict()
-            
+
             logger.info(
                 "性能测试完成: %s, 总耗时=%.2fms, FPS=%.2f",
                 test_name,
-                result_dict['total_time_ms'],
-                result_dict['processing_fps']
+                result_dict["total_time_ms"],
+                result_dict["processing_fps"]
             )
-            
+
             return result_dict
-            
+
         except Exception as e:
             logger.error("性能测试失败: %s", e)
             raise RuntimeError(f"Benchmark failed: {e}") from e
-    
-    def get_cpu_features(self) -> Dict[str, bool]:
+
+    def get_cpu_features(self) -> dict[str, bool]:
         """获取 CPU 特性支持情况
         
         Returns:
             dict: CPU 特性字典（如 {'avx2': True, 'sse4.1': True}）
         """
         return self._extractor.get_cpu_features()
-    
+
     def get_thread_count(self) -> int:
         """获取实际使用的线程数
         
@@ -189,13 +194,13 @@ def extract_keyframes_from_video(
     video_path: str,
     output_dir: str,
     max_keyframes: int = 10,
-    max_save: Optional[int] = None,
-    ffmpeg_path: Optional[str] = None,
-    use_simd: Optional[bool] = None,
-    threads: Optional[int] = None,
+    max_save: int | None = None,
+    ffmpeg_path: str | None = None,
+    use_simd: bool | None = None,
+    threads: int | None = None,
     verbose: bool = False,
-    block_size: Optional[int] = None
-) -> Dict[str, Any]:
+    block_size: int | None = None
+) -> dict[str, Any]:
     """快捷函数：从视频中提取关键帧
     
     这是一个便捷的封装函数，用于快速提取视频关键帧。
@@ -244,7 +249,7 @@ def extract_keyframes_from_video(
             "inkfox 视频处理模块不可用，请安装 inkfox: "
             "pip install inkfox"
         )
-    
+
     try:
         result = video.extract_keyframes_from_video(  # type: ignore
             video_path=video_path,
@@ -257,15 +262,15 @@ def extract_keyframes_from_video(
             verbose=verbose,
             block_size=block_size
         )
-        
+
         return result.to_dict()
-        
+
     except Exception as e:
         logger.error("快捷提取关键帧失败: %s", e)
         raise
 
 
-def get_system_info() -> Dict[str, Any]:
+def get_system_info() -> dict[str, Any]:
     """获取系统信息
     
     Returns:
@@ -276,7 +281,7 @@ def get_system_info() -> Dict[str, Any]:
     """
     if not INKFOX_AVAILABLE:
         raise RuntimeError("inkfox 视频处理模块不可用")
-    
+
     return video.get_system_info()  # type: ignore
 
 
@@ -290,9 +295,9 @@ def check_inkfox_available() -> bool:
 
 
 __all__ = [
-    'VideoKeyframeExtractor',
-    'extract_keyframes_from_video',
-    'get_system_info',
-    'check_inkfox_available',
-    'INKFOX_AVAILABLE',
+    "INKFOX_AVAILABLE",
+    "VideoKeyframeExtractor",
+    "check_inkfox_available",
+    "extract_keyframes_from_video",
+    "get_system_info",
 ]

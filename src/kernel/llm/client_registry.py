@@ -4,8 +4,13 @@ LLM Client 注册管理器
 管理和注册不同的 LLM 客户端实现
 """
 
-from typing import Dict, Type, Optional, Any, List
-from kernel.logger import get_logger
+from typing import Any
+
+try:
+    from src.common.logger import get_logger
+except ImportError:
+    import logging
+    get_logger = logging.getLogger
 from .model_client.base_client import BaseLLMClient
 
 
@@ -14,17 +19,17 @@ class ClientRegistry:
     
     提供客户端的注册、获取、管理功能
     """
-    
+
     def __init__(self):
         """初始化注册器"""
-        self._clients: Dict[str, Type[BaseLLMClient]] = {}
-        self._instances: Dict[str, BaseLLMClient] = {}
+        self._clients: dict[str, type[BaseLLMClient]] = {}
+        self._instances: dict[str, BaseLLMClient] = {}
         self.logger = get_logger(__name__)
-    
+
     def register(
         self,
         name: str,
-        client_class: Type[BaseLLMClient],
+        client_class: type[BaseLLMClient],
         override: bool = False
     ) -> None:
         """注册LLM客户端类
@@ -47,7 +52,7 @@ class ClientRegistry:
                 f"client_class must be a subclass of BaseLLMClient, "
                 f"got {client_class.__name__}"
             )
-        
+
         # 检查是否已存在
         if name in self._clients and not override:
             self.logger.warning(f"客户端 '{name}' 已注册，使用 override=True 覆盖")
@@ -55,11 +60,11 @@ class ClientRegistry:
                 f"Client '{name}' is already registered. "
                 f"Use override=True to replace it."
             )
-        
+
         # 注册
         self._clients[name] = client_class
         self.logger.info(f"注册LLM客户端: {name} -> {client_class.__name__}")
-    
+
     def unregister(self, name: str) -> None:
         """注销客户端
         
@@ -71,7 +76,7 @@ class ClientRegistry:
         """
         if name not in self._clients:
             raise KeyError(f"Client '{name}' is not registered")
-        
+
         # 如果有实例，先关闭
         if name in self._instances:
             import asyncio
@@ -80,11 +85,11 @@ class ClientRegistry:
             except:
                 pass
             del self._instances[name]
-        
+
         del self._clients[name]
         self.logger.info(f"注销LLM客户端: {name}")
-    
-    def get_client_class(self, name: str) -> Type[BaseLLMClient]:
+
+    def get_client_class(self, name: str) -> type[BaseLLMClient]:
         """获取客户端类
         
         Args:
@@ -97,7 +102,7 @@ class ClientRegistry:
             KeyError: 如果客户端未注册
         """
         if name not in self._clients:
-            available = ', '.join(self.list_clients())
+            available = ", ".join(self.list_clients())
             self.logger.error(
                 f"客户端 '{name}' 未注册，可用客户端: {available}"
             )
@@ -105,14 +110,14 @@ class ClientRegistry:
                 f"Client '{name}' is not registered. "
                 f"Available clients: {available}"
             )
-        
+
         return self._clients[name]
-    
+
     def create_client(
         self,
         name: str,
-        api_key: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        api_key: str | None = None,
+        config: dict[str, Any] | None = None,
         cache: bool = True
     ) -> BaseLLMClient:
         """创建客户端实例
@@ -133,25 +138,25 @@ class ClientRegistry:
         if cache and name in self._instances:
             self.logger.debug(f"复用缓存的客户端实例: {name}")
             return self._instances[name]
-        
+
         # 获取客户端类
         client_class = self.get_client_class(name)
-        
+
         # 创建实例
         self.logger.info(f"创建LLM客户端实例: {name}")
         instance = client_class(api_key=api_key, config=config)
-        
+
         # 缓存实例
         if cache:
             self._instances[name] = instance
-        
+
         return instance
-    
+
     async def create_client_async(
         self,
         name: str,
-        api_key: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        api_key: str | None = None,
+        config: dict[str, Any] | None = None,
         cache: bool = True
     ) -> BaseLLMClient:
         """异步创建并初始化客户端实例
@@ -171,15 +176,15 @@ class ClientRegistry:
         """
         # 创建实例
         client = self.create_client(name, api_key, config, cache)
-        
+
         # 如果未初始化，则初始化
         if not client._initialized:
             self.logger.info(f"初始化LLM客户端: {name}")
             await client.initialize()
             client._initialized = True
-        
+
         return client
-    
+
     def is_registered(self, name: str) -> bool:
         """检查客户端是否已注册
         
@@ -190,16 +195,16 @@ class ClientRegistry:
             bool: 是否已注册
         """
         return name in self._clients
-    
-    def list_clients(self) -> List[str]:
+
+    def list_clients(self) -> list[str]:
         """列出所有已注册的客户端名称
         
         Returns:
             List[str]: 客户端名称列表
         """
         return list(self._clients.keys())
-    
-    def get_client_info(self, name: str) -> Dict[str, Any]:
+
+    def get_client_info(self, name: str) -> dict[str, Any]:
         """获取客户端信息
         
         Args:
@@ -212,29 +217,29 @@ class ClientRegistry:
             KeyError: 如果客户端未注册
         """
         client_class = self.get_client_class(name)
-        
+
         return {
-            'name': name,
-            'class': client_class.__name__,
-            'module': client_class.__module__,
-            'has_instance': name in self._instances,
-            'doc': client_class.__doc__
+            "name": name,
+            "class": client_class.__name__,
+            "module": client_class.__module__,
+            "has_instance": name in self._instances,
+            "doc": client_class.__doc__
         }
-    
+
     async def close_all(self) -> None:
         """关闭所有缓存的客户端实例"""
         self.logger.info(f"关闭所有LLM客户端实例，共 {len(self._instances)} 个")
-        
+
         for name, client in self._instances.items():
             try:
                 await client.close()
                 self.logger.debug(f"关闭客户端实例: {name}")
             except Exception as e:
                 self.logger.error(f"关闭客户端 '{name}' 失败: {e}")
-        
+
         self._instances.clear()
-    
-    def clear_cache(self, name: Optional[str] = None) -> None:
+
+    def clear_cache(self, name: str | None = None) -> None:
         """清除缓存的客户端实例
         
         Args:
@@ -247,7 +252,7 @@ class ClientRegistry:
         else:
             self._instances.clear()
             self.logger.debug("清除所有客户端缓存")
-    
+
     def __repr__(self) -> str:
         return (
             f"ClientRegistry("
@@ -257,7 +262,7 @@ class ClientRegistry:
 
 
 # 全局单例注册器
-_global_registry: Optional[ClientRegistry] = None
+_global_registry: ClientRegistry | None = None
 
 
 def get_registry() -> ClientRegistry:
@@ -274,7 +279,7 @@ def get_registry() -> ClientRegistry:
 
 def register_client(
     name: str,
-    client_class: Type[BaseLLMClient],
+    client_class: type[BaseLLMClient],
     override: bool = False
 ) -> None:
     """注册LLM客户端到全局注册器
@@ -304,8 +309,8 @@ def unregister_client(name: str) -> None:
 
 def create_client(
     name: str,
-    api_key: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
+    api_key: str | None = None,
+    config: dict[str, Any] | None = None,
     cache: bool = True
 ) -> BaseLLMClient:
     """从全局注册器创建客户端实例
@@ -329,8 +334,8 @@ def create_client(
 
 def get_client(
     name: str,
-    api_key: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
+    api_key: str | None = None,
+    config: dict[str, Any] | None = None,
     cache: bool = True
 ) -> BaseLLMClient:
     """与 create_client 等价，保持向后兼容接口"""
@@ -339,8 +344,8 @@ def get_client(
 
 async def create_client_async(
     name: str,
-    api_key: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
+    api_key: str | None = None,
+    config: dict[str, Any] | None = None,
     cache: bool = True
 ) -> BaseLLMClient:
     """异步创建并初始化客户端实例
@@ -363,7 +368,7 @@ async def create_client_async(
     return await registry.create_client_async(name, api_key, config, cache)
 
 
-def list_clients() -> List[str]:
+def list_clients() -> list[str]:
     """列出所有已注册的客户端
     
     Returns:

@@ -4,19 +4,20 @@ AWS Bedrock 客户端实现
 支持 AWS Bedrock 的各种模型（Claude, Llama, Titan 等）
 """
 
-from typing import List, Dict, Any, Optional, AsyncIterator, Union, TYPE_CHECKING
-import json
 import asyncio
+import json
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
-from .base_client import BaseLLMClient, ModelInfo, LLMResponse, StreamChunk, ModelCapability
 from ..exceptions import (
-    LLMError,
+    APIConnectionError,
     AuthenticationError,
-    RateLimitError,
-    ModelNotFoundError,
     InvalidRequestError,
-    APIConnectionError
+    LLMError,
+    ModelNotFoundError,
+    RateLimitError,
 )
+from .base_client import BaseLLMClient, LLMResponse, ModelCapability, ModelInfo, StreamChunk
 
 try:
     from ...logger import get_logger
@@ -28,7 +29,7 @@ except ImportError:
 # boto3 是可选的
 try:
     import boto3  # type: ignore[import-not-found]
-    from botocore.exceptions import ClientError, BotoCoreError  # type: ignore[import-not-found]
+    from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-not-found]
     BOTO3_AVAILABLE = True
 except ImportError:
     boto3 = None  # type: ignore[assignment]
@@ -53,14 +54,14 @@ class BedrockClient(BaseLLMClient):
     - AI21 Jurassic
     - Cohere Command
     """
-    
+
     def __init__(
         self,
         region_name: str = "us-east-1",
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
-        aws_session_token: Optional[str] = None,
-        profile_name: Optional[str] = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+        profile_name: str | None = None,
         **kwargs
     ):
         """初始化 Bedrock 客户端
@@ -79,11 +80,11 @@ class BedrockClient(BaseLLMClient):
                 "Install with: pip install boto3"
             )
         assert boto3 is not None
-        
+
         super().__init__()
-        
+
         self.region_name = region_name
-        
+
         # 创建会话
         session_kwargs = {}
         if aws_access_key_id:
@@ -94,15 +95,15 @@ class BedrockClient(BaseLLMClient):
             session_kwargs["aws_session_token"] = aws_session_token
         if profile_name:
             session_kwargs["profile_name"] = profile_name
-        
+
         self.session = boto3.Session(**session_kwargs)
         self.client = self.session.client(
             service_name="bedrock-runtime",
             region_name=region_name
         )
-        
+
         logger.info(f"Bedrock client initialized for region {region_name}")
-    
+
     async def initialize(self) -> bool:
         """初始化客户端
         
@@ -115,17 +116,17 @@ class BedrockClient(BaseLLMClient):
                 service_name="bedrock",
                 region_name=self.region_name
             )
-            
+
             # 同步调用，需要在线程池中执行
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
                 bedrock_client.list_foundation_models
             )
-            
+
             logger.debug(f"Bedrock client initialized, {len(response.get('modelSummaries', []))} models available")
             return True
-            
+
         except ClientError as e:
             error_response = getattr(e, "response", {}) or {}
             error_code = error_response.get("Error", {}).get("Code", "")
@@ -136,12 +137,12 @@ class BedrockClient(BaseLLMClient):
         except Exception as e:
             logger.error(f"Initialization failed: {e}")
             return False
-    
+
     async def close(self):
         """关闭客户端"""
         # boto3 客户端不需要显式关闭
         logger.info("Bedrock client closed")
-    
+
     def _handle_error(self, error: ClientError) -> LLMError:
         """处理错误
         
@@ -154,7 +155,7 @@ class BedrockClient(BaseLLMClient):
         error_response = getattr(error, "response", {}) or {}
         error_code = error_response.get("Error", {}).get("Code", "")
         error_message = error_response.get("Error", {}).get("Message", "")
-        
+
         if error_code == "UnrecognizedClientException":
             return AuthenticationError(f"Authentication failed: {error_message}")
         elif error_code == "ThrottlingException":
@@ -167,12 +168,12 @@ class BedrockClient(BaseLLMClient):
             return APIConnectionError(f"Service unavailable: {error_message}")
         else:
             return LLMError(f"Bedrock error: {error_message}")
-    
+
     def _convert_messages_to_bedrock_format(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model_id: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """转换消息格式为 Bedrock 格式
         
         Args:
@@ -192,67 +193,67 @@ class BedrockClient(BaseLLMClient):
         else:
             # 默认格式
             return self._convert_to_claude_format(messages)
-    
-    def _convert_to_claude_format(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+    def _convert_to_claude_format(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """转换为 Claude 格式"""
         # Claude 使用特殊的提示格式
         system = None
         conversation = []
-        
+
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
-            
+
             if role == "system":
                 system = content
             elif role == "user":
                 conversation.append({"role": "user", "content": content})
             elif role == "assistant":
                 conversation.append({"role": "assistant", "content": content})
-        
+
         request_body = {"messages": conversation}
-        
+
         if system:
             request_body["system"] = system
-        
+
         return request_body
-    
-    def _convert_to_llama_format(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+    def _convert_to_llama_format(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """转换为 Llama 格式"""
         # Llama 使用简单的提示格式
         prompt_parts = []
-        
+
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
-            
+
             if role == "system":
                 prompt_parts.append(f"<<SYS>>\n{content}\n<</SYS>>")
             elif role == "user":
                 prompt_parts.append(f"[INST] {content} [/INST]")
             elif role == "assistant":
                 prompt_parts.append(content)
-        
+
         return {"prompt": "\n\n".join(prompt_parts)}
-    
-    def _convert_to_titan_format(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+    def _convert_to_titan_format(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """转换为 Titan 格式"""
         # Titan 使用简单的输入格式
         input_text = "\n\n".join(
-            f"{msg.get('role')}: {msg.get('content', '')}" 
+            f"{msg.get('role')}: {msg.get('content', '')}"
             for msg in messages
         )
-        
+
         return {"inputText": input_text}
-    
+
     async def generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> LLMResponse:
         """生成文本
@@ -272,7 +273,7 @@ class BedrockClient(BaseLLMClient):
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_bedrock_format(messages, model)
-            
+
             # 添加生成配置
             if "anthropic.claude" in model:
                 request_body["max_tokens"] = max_tokens or 2048
@@ -280,12 +281,12 @@ class BedrockClient(BaseLLMClient):
                 request_body["top_p"] = top_p
                 if stop:
                     request_body["stop_sequences"] = stop
-            
+
             elif "meta.llama" in model:
                 request_body["max_gen_len"] = max_tokens or 2048
                 request_body["temperature"] = temperature
                 request_body["top_p"] = top_p
-            
+
             elif "amazon.titan" in model:
                 request_body["textGenerationConfig"] = {
                     "maxTokenCount": max_tokens or 2048,
@@ -294,9 +295,9 @@ class BedrockClient(BaseLLMClient):
                 }
                 if stop:
                     request_body["textGenerationConfig"]["stopSequences"] = stop
-            
+
             logger.debug(f"Generating with model {model}")
-            
+
             # 调用 API（在线程池中执行同步调用）
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -306,10 +307,10 @@ class BedrockClient(BaseLLMClient):
                     body=json.dumps(request_body)
                 )
             )
-            
+
             # 解析响应
             response_body = json.loads(response["body"].read())
-            
+
             # 提取内容（根据模型类型）
             if "anthropic.claude" in model:
                 content = response_body.get("content", [{}])[0].get("text", "")
@@ -320,7 +321,7 @@ class BedrockClient(BaseLLMClient):
                 }
                 usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
                 finish_reason = response_body.get("stop_reason", "stop")
-            
+
             elif "meta.llama" in model:
                 content = response_body.get("generation", "")
                 usage = {
@@ -330,7 +331,7 @@ class BedrockClient(BaseLLMClient):
                 }
                 usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
                 finish_reason = response_body.get("stop_reason", "stop")
-            
+
             elif "amazon.titan" in model:
                 results = response_body.get("results", [{}])
                 content = results[0].get("outputText", "") if results else ""
@@ -341,12 +342,12 @@ class BedrockClient(BaseLLMClient):
                 }
                 usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
                 finish_reason = results[0].get("completionReason", "FINISH") if results else "FINISH"
-            
+
             else:
                 content = str(response_body)
                 usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
                 finish_reason = "stop"
-            
+
             result = LLMResponse(
                 content=content,
                 model=model,
@@ -354,25 +355,25 @@ class BedrockClient(BaseLLMClient):
                 usage=usage,
                 raw_response=response_body
             )
-            
+
             logger.debug(f"Generation completed: {result.usage}")
             return result
-            
+
         except ClientError as e:
             logger.error(f"Generation failed: {e}")
             raise self._handle_error(e)
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             raise LLMError(f"Bedrock error: {e}") from e
-    
+
     async def stream_generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> AsyncIterator[StreamChunk]:
         """流式生成文本
@@ -392,7 +393,7 @@ class BedrockClient(BaseLLMClient):
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_bedrock_format(messages, model)
-            
+
             # 添加生成配置（与 generate 相同）
             if "anthropic.claude" in model:
                 request_body["max_tokens"] = max_tokens or 2048
@@ -400,9 +401,9 @@ class BedrockClient(BaseLLMClient):
                 request_body["top_p"] = top_p
                 if stop:
                     request_body["stop_sequences"] = stop
-            
+
             logger.debug(f"Streaming generation with model {model}")
-            
+
             # 流式调用 API
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -412,7 +413,7 @@ class BedrockClient(BaseLLMClient):
                     body=json.dumps(request_body)
                 )
             )
-            
+
             # 读取流
             stream = response.get("body")
             if stream:
@@ -420,45 +421,45 @@ class BedrockClient(BaseLLMClient):
                     chunk_data = event.get("chunk")
                     if chunk_data:
                         chunk_json = json.loads(chunk_data.get("bytes").decode())
-                        
+
                         # 提取内容（根据模型类型）
                         content = ""
                         finish_reason = None
-                        
+
                         if "anthropic.claude" in model:
                             delta = chunk_json.get("delta", {})
                             content = delta.get("text", "")
                             if chunk_json.get("type") == "message_stop":
                                 finish_reason = chunk_json.get("stop_reason")
-                        
+
                         elif "meta.llama" in model:
                             content = chunk_json.get("generation", "")
-                        
+
                         elif "amazon.titan" in model:
                             content = chunk_json.get("outputText", "")
-                        
+
                         if content:
                             yield StreamChunk(
                                 content=content,
                                 model=model,
                                 finish_reason=finish_reason
                             )
-            
+
             logger.debug("Streaming generation completed")
-            
+
         except ClientError as e:
             logger.error(f"Streaming generation failed: {e}")
             raise self._handle_error(e)
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
             raise LLMError(f"Bedrock error: {e}") from e
-    
+
     async def generate_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         model: str,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
+        tool_choice: str | dict[str, Any] | None = "auto",
         **kwargs
     ) -> LLMResponse:
         """使用工具调用生成
@@ -477,11 +478,11 @@ class BedrockClient(BaseLLMClient):
         """
         if "anthropic.claude-3" not in model:
             logger.warning(f"Model {model} may not support tool calling")
-        
+
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_bedrock_format(messages, model)
-            
+
             # 转换工具格式（Claude 格式）
             claude_tools = []
             for tool in tools:
@@ -492,9 +493,9 @@ class BedrockClient(BaseLLMClient):
                         "description": func.get("description"),
                         "input_schema": func.get("parameters")
                     })
-            
+
             request_body["tools"] = claude_tools
-            
+
             # 添加工具选择策略
             if tool_choice and tool_choice != "auto":
                 if tool_choice == "none":
@@ -504,9 +505,9 @@ class BedrockClient(BaseLLMClient):
                         "type": "tool",
                         "name": tool_choice
                     }
-            
+
             logger.debug(f"Generating with tools, model {model}")
-            
+
             # 调用 API
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -516,15 +517,15 @@ class BedrockClient(BaseLLMClient):
                     body=json.dumps(request_body)
                 )
             )
-            
+
             # 解析响应
             response_body = json.loads(response["body"].read())
-            
+
             # 提取内容和工具调用
             content_blocks = response_body.get("content", [])
             content = ""
             tool_calls = []
-            
+
             for block in content_blocks:
                 if block.get("type") == "text":
                     content += block.get("text", "")
@@ -537,7 +538,7 @@ class BedrockClient(BaseLLMClient):
                             "arguments": json.dumps(block.get("input", {}))
                         }
                     })
-            
+
             # 提取使用情况
             usage = {
                 "prompt_tokens": response_body.get("usage", {}).get("input_tokens", 0),
@@ -545,7 +546,7 @@ class BedrockClient(BaseLLMClient):
                 "total_tokens": 0
             }
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
-            
+
             result = LLMResponse(
                 content=content,
                 model=model,
@@ -554,23 +555,23 @@ class BedrockClient(BaseLLMClient):
                 usage=usage,
                 raw_response=response_body
             )
-            
+
             logger.debug(f"Tool calling completed: {len(tool_calls)} calls")
             return result
-            
+
         except ClientError as e:
             logger.error(f"Tool calling failed: {e}")
             raise self._handle_error(e)
         except Exception as e:
             logger.error(f"Tool calling failed: {e}")
             raise LLMError(f"Bedrock error: {e}") from e
-    
+
     async def create_embeddings(
         self,
-        texts: List[str],
+        texts: list[str],
         model: str = "amazon.titan-embed-text-v1",
         **kwargs
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         """创建文本嵌入
         
         Args:
@@ -583,14 +584,14 @@ class BedrockClient(BaseLLMClient):
         """
         try:
             logger.debug(f"Creating embeddings for {len(texts)} texts")
-            
+
             embeddings = []
             loop = asyncio.get_event_loop()
-            
+
             # Bedrock 嵌入 API 每次处理一个文本
             for text in texts:
                 request_body = {"inputText": text}
-                
+
                 response = await loop.run_in_executor(
                     None,
                     lambda: self.client.invoke_model(
@@ -598,21 +599,21 @@ class BedrockClient(BaseLLMClient):
                         body=json.dumps(request_body)
                     )
                 )
-                
+
                 response_body = json.loads(response["body"].read())
                 embedding = response_body.get("embedding", [])
                 embeddings.append(embedding)
-            
+
             logger.debug(f"Embeddings created: {len(embeddings)} vectors")
             return embeddings
-            
+
         except ClientError as e:
             logger.error(f"Embeddings creation failed: {e}")
             raise self._handle_error(e)
         except Exception as e:
             logger.error(f"Embeddings creation failed: {e}")
             raise LLMError(f"Bedrock error: {e}") from e
-    
+
     async def get_model_info(self, model: str) -> ModelInfo:
         """获取模型信息
         
@@ -624,16 +625,16 @@ class BedrockClient(BaseLLMClient):
         """
         # Bedrock 不提供详细的模型信息 API，使用预定义的信息
         capabilities = {ModelCapability.CHAT}
-        
+
         # 根据模型 ID 推断能力
         if "anthropic.claude-3" in model:
             capabilities.add(ModelCapability.FUNCTION_CALLING)
             if "opus" in model or "sonnet" in model:
                 capabilities.add(ModelCapability.VISION)
-        
+
         if "embed" in model:
             capabilities = {ModelCapability.EMBEDDINGS}
-        
+
         # 预定义的上下文窗口
         context_windows = {
             "anthropic.claude-3-opus": 200000,
@@ -644,13 +645,13 @@ class BedrockClient(BaseLLMClient):
             "meta.llama3-8b": 8192,
             "amazon.titan-text": 32000
         }
-        
+
         context_window = 8192  # 默认值
         for key, value in context_windows.items():
             if key in model:
                 context_window = value
                 break
-        
+
         return ModelInfo(
             provider="bedrock",
             model=model,

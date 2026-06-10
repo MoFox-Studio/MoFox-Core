@@ -4,18 +4,19 @@ OpenAI 客户端实现
 支持 OpenAI API 和兼容 API（如 Azure OpenAI, DeepSeek 等）
 """
 
-from typing import List, Dict, Any, Optional, AsyncIterator, Union
+from collections.abc import AsyncIterator
+from typing import Any
 
-from .base_client import BaseLLMClient, ModelInfo, LLMResponse, StreamChunk, ModelCapability
 from ..exceptions import (
-    LLMError,
-    AuthenticationError,
-    RateLimitError,
-    ModelNotFoundError,
-    InvalidRequestError,
     APIConnectionError,
-    ContextLengthExceededError
+    AuthenticationError,
+    ContextLengthExceededError,
+    InvalidRequestError,
+    LLMError,
+    ModelNotFoundError,
+    RateLimitError,
 )
+from .base_client import BaseLLMClient, LLMResponse, ModelCapability, ModelInfo, StreamChunk
 
 try:
     from ...logger import get_logger
@@ -26,9 +27,10 @@ except ImportError:
 
 # OpenAI 库是可选的
 try:
-    from openai import AsyncOpenAI, OpenAIError, AuthenticationError as OpenAIAuthError
-    from openai import RateLimitError as OpenAIRateLimitError
     from openai import APIConnectionError as OpenAIConnectionError
+    from openai import AsyncOpenAI, OpenAIError
+    from openai import AuthenticationError as OpenAIAuthError
+    from openai import RateLimitError as OpenAIRateLimitError
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -46,12 +48,12 @@ class OpenAIClient(BaseLLMClient):
     
     支持 OpenAI API 和兼容的 API 接口
     """
-    
+
     def __init__(
         self,
         api_key: str,
-        base_url: Optional[str] = None,
-        organization: Optional[str] = None,
+        base_url: str | None = None,
+        organization: str | None = None,
         timeout: float = 60.0,
         max_retries: int = 3,
         **kwargs
@@ -71,37 +73,37 @@ class OpenAIClient(BaseLLMClient):
                 "openai package is required for OpenAIClient. "
                 "Install with: pip install openai"
             )
-        
+
         super().__init__()
-        
+
         self.api_key = api_key
         self.base_url = base_url
         self.organization = organization
         self.timeout = timeout
         self.max_retries = max_retries
-        
+
         # 创建客户端
         client_kwargs = {
             "api_key": api_key,
             "timeout": timeout,
             "max_retries": max_retries
         }
-        
+
         if base_url:
             client_kwargs["base_url"] = base_url
-        
+
         if organization:
             client_kwargs["organization"] = organization
-        
+
         if not OPENAI_AVAILABLE:
             raise ImportError(
                 "openai package is required for OpenAIClient. Install with: pip install openai"
             )
         # 仅在 OpenAI 可用时创建客户端，避免静态分析误报
-        from typing import cast, Any
+        from typing import Any, cast
         self.client = cast(Any, AsyncOpenAI)(**client_kwargs)
         logger.info(f"OpenAI client initialized with base_url={base_url}")
-    
+
     async def initialize(self) -> bool:
         """初始化客户端
         
@@ -113,19 +115,19 @@ class OpenAIClient(BaseLLMClient):
             models = await self.client.models.list()
             logger.debug(f"OpenAI client initialized, {len(models.data)} models available")
             return True
-            
+
         except OpenAIAuthError as e:
             logger.error(f"Authentication failed: {e}")
             raise AuthenticationError(f"OpenAI authentication failed: {e}") from e
         except Exception as e:
             logger.error(f"Initialization failed: {e}")
             return False
-    
+
     async def close(self):
         """关闭客户端"""
         await self.client.close()
         logger.info("OpenAI client closed")
-    
+
     def _handle_error(self, error: Exception) -> LLMError:
         """处理错误
         
@@ -149,15 +151,15 @@ class OpenAIClient(BaseLLMClient):
             return InvalidRequestError(f"Invalid request: {error}")
         else:
             return LLMError(f"OpenAI error: {error}")
-    
+
     async def generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> LLMResponse:
         """生成文本
@@ -190,21 +192,21 @@ class OpenAIClient(BaseLLMClient):
                 "frequency_penalty": frequency_penalty,
                 "presence_penalty": presence_penalty
             }
-            
+
             if max_tokens is not None:
                 params["max_tokens"] = max_tokens
-            
+
             if stop:
                 params["stop"] = stop
-            
+
             # 添加其他参数
             params.update(kwargs)
-            
+
             logger.debug(f"Generating with model {model}")
-            
+
             # 调用 API
             response = await self.client.chat.completions.create(**params)
-            
+
             # 转换响应
             choice = response.choices[0]
             result = LLMResponse(
@@ -218,22 +220,22 @@ class OpenAIClient(BaseLLMClient):
                 },
                 raw_response=response.model_dump()
             )
-            
+
             logger.debug(f"Generation completed: {result.usage}")
             return result
-            
+
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             raise self._handle_error(e)
-    
+
     async def stream_generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> AsyncIterator[StreamChunk]:
         """流式生成文本
@@ -267,52 +269,52 @@ class OpenAIClient(BaseLLMClient):
                 "presence_penalty": presence_penalty,
                 "stream": True
             }
-            
+
             if max_tokens is not None:
                 params["max_tokens"] = max_tokens
-            
+
             if stop:
                 params["stop"] = stop
-            
+
             # 添加其他参数
             params.update(kwargs)
-            
+
             logger.debug(f"Streaming generation with model {model}")
-            
+
             # 流式调用
             stream = await self.client.chat.completions.create(**params)
-            
+
             async for chunk in stream:
                 if chunk.choices:
                     delta = chunk.choices[0].delta
-                    
+
                     # 提取内容
                     content = delta.content or ""
-                    
+
                     # 提取工具调用
                     tool_calls = None
-                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
                         tool_calls = [tc.model_dump() for tc in delta.tool_calls]
-                    
+
                     yield StreamChunk(
                         content=content,
                         model=chunk.model,
                         finish_reason=chunk.choices[0].finish_reason,
                         tool_calls=tool_calls
                     )
-            
+
             logger.debug("Streaming generation completed")
-            
+
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
             raise self._handle_error(e)
-    
+
     async def generate_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         model: str,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_choice: str | dict[str, Any] | None = None,
         **kwargs
     ) -> LLMResponse:
         """使用工具调用生成
@@ -338,18 +340,18 @@ class OpenAIClient(BaseLLMClient):
                 "tools": tools,
                 "tool_choice": resolved_tool_choice
             }
-            
+
             # 添加其他参数
             params.update(kwargs)
-            
+
             logger.debug(f"Generating with tools, model {model}")
-            
+
             # 调用 API
             response = await self.client.chat.completions.create(**params)
-            
+
             # 转换响应
             choice = response.choices[0]
-            
+
             # 提取工具调用
             tool_calls = None
             if choice.message.tool_calls:
@@ -364,7 +366,7 @@ class OpenAIClient(BaseLLMClient):
                     }
                     for tc in choice.message.tool_calls
                 ]
-            
+
             result = LLMResponse(
                 content=choice.message.content or "",
                 model=response.model,
@@ -377,20 +379,20 @@ class OpenAIClient(BaseLLMClient):
                 },
                 raw_response=response.model_dump()
             )
-            
+
             logger.debug(f"Tool calling completed: {len(tool_calls or [])} calls")
             return result
-            
+
         except Exception as e:
             logger.error(f"Tool calling failed: {e}")
             raise self._handle_error(e)
-    
+
     async def create_embeddings(
         self,
-        texts: List[str],
+        texts: list[str],
         model: str = "text-embedding-ada-002",
         **kwargs
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         """创建文本嵌入
         
         Args:
@@ -403,24 +405,24 @@ class OpenAIClient(BaseLLMClient):
         """
         try:
             logger.debug(f"Creating embeddings for {len(texts)} texts")
-            
+
             # 调用 API
             response = await self.client.embeddings.create(
                 model=model,
                 input=texts,
                 **kwargs
             )
-            
+
             # 提取嵌入向量
             embeddings = [data.embedding for data in response.data]
-            
+
             logger.debug(f"Embeddings created: {len(embeddings)} vectors")
             return embeddings
-            
+
         except Exception as e:
             logger.error(f"Embeddings creation failed: {e}")
             raise self._handle_error(e)
-    
+
     async def get_model_info(self, model: str) -> ModelInfo:
         """获取模型信息
         
@@ -433,15 +435,15 @@ class OpenAIClient(BaseLLMClient):
         try:
             # 调用 API
             model_data = await self.client.models.retrieve(model)
-            
+
             # 推断能力
             capabilities = {ModelCapability.CHAT}
             if "gpt-4" in model or "gpt-3.5" in model:
                 capabilities.add(ModelCapability.FUNCTION_CALLING)
-            
+
             if "vision" in model:
                 capabilities.add(ModelCapability.VISION)
-            
+
             return ModelInfo(
                 provider="openai",
                 model=model_data.id,
@@ -451,7 +453,7 @@ class OpenAIClient(BaseLLMClient):
                 supports_streaming=True,
                 metadata=model_data.model_dump()
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to get model info: {e}")
             # 返回默认信息
@@ -463,7 +465,7 @@ class OpenAIClient(BaseLLMClient):
                 max_output_tokens=2048,
                 supports_streaming=True
             )
-    
+
     def _get_context_window(self, model: str) -> int:
         """获取上下文窗口大小"""
         context_windows = {
@@ -473,13 +475,13 @@ class OpenAIClient(BaseLLMClient):
             "gpt-3.5-turbo": 16384,
             "gpt-3.5-turbo-16k": 16384
         }
-        
+
         for key, value in context_windows.items():
             if key in model:
                 return value
-        
+
         return 4096  # 默认值
-    
+
     def _get_max_output_tokens(self, model: str) -> int:
         """获取最大输出 token 数"""
         # 通常是上下文窗口的一部分

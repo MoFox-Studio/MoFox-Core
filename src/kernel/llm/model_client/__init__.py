@@ -4,13 +4,7 @@ LLM Model Client 子模块
 提供各种 LLM 提供商的客户端实现
 """
 
-from .base_client import (
-    BaseLLMClient,
-    ModelInfo,
-    LLMResponse,
-    StreamChunk,
-    ModelCapability
-)
+from .base_client import BaseLLMClient, LLMResponse, ModelCapability, ModelInfo, StreamChunk
 
 # 条件导入客户端实现
 try:
@@ -42,12 +36,12 @@ __all__ = [
     "LLMResponse",
     "StreamChunk",
     "ModelCapability",
-    
+
     # Clients
     "OpenAIClient",
     "GeminiClient",
     "BedrockClient",
-    
+
     # Availability flags
     "OPENAI_CLIENT_AVAILABLE",
     "GEMINI_CLIENT_AVAILABLE",

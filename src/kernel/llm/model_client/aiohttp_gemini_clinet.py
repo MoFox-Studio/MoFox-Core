@@ -4,19 +4,20 @@ Google Gemini 客户端实现
 使用 aiohttp 实现的 Gemini API 客户端
 """
 
-from typing import List, Dict, Any, Optional, AsyncIterator, TYPE_CHECKING, Union
 import json
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
-from .base_client import BaseLLMClient, ModelInfo, LLMResponse, StreamChunk, ModelCapability
 from ..exceptions import (
-    LLMError,
-    AuthenticationError,
-    RateLimitError,
-    ModelNotFoundError,
-    InvalidRequestError,
     APIConnectionError,
-    ContextLengthExceededError
+    AuthenticationError,
+    ContextLengthExceededError,
+    InvalidRequestError,
+    LLMError,
+    ModelNotFoundError,
+    RateLimitError,
 )
+from .base_client import BaseLLMClient, LLMResponse, ModelCapability, ModelInfo, StreamChunk
 
 try:
     from ...logger import get_logger
@@ -43,13 +44,13 @@ class GeminiClient(BaseLLMClient):
     
     使用 aiohttp 实现的 Gemini API 客户端
     """
-    
+
     DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-    
+
     def __init__(
         self,
         api_key: str,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         timeout: float = 60.0,
         max_retries: int = 3,
         **kwargs
@@ -68,18 +69,18 @@ class GeminiClient(BaseLLMClient):
                 "aiohttp package is required for GeminiClient. "
                 "Install with: pip install aiohttp"
             )
-        
+
         super().__init__()
-        
+
         self.api_key = api_key
         self.base_url = base_url or self.DEFAULT_BASE_URL
         assert aiohttp is not None
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.max_retries = max_retries
-        
-        self.session: Optional["ClientSession"] = None
+
+        self.session: "ClientSession" | None = None
         logger.info(f"Gemini client initialized with base_url={self.base_url}")
-    
+
     async def initialize(self) -> bool:
         """初始化客户端
         
@@ -91,30 +92,30 @@ class GeminiClient(BaseLLMClient):
             # 创建会话
             self.session = aiohttp.ClientSession(timeout=self.timeout)
             assert self.session is not None
-            
+
             # 测试连接 - 列出模型
             url = f"{self.base_url}/models?key={self.api_key}"
             async with self.session.get(url) as response:
                 if response.status == 401:
                     raise AuthenticationError("Invalid API key")
-                
+
                 response.raise_for_status()
                 data = await response.json()
                 logger.debug(f"Gemini client initialized, {len(data.get('models', []))} models available")
-            
+
             return True
-            
+
         except aiohttp.ClientError as e:
             logger.error(f"Initialization failed: {e}")
             return False
-    
+
     async def close(self):
         """关闭客户端"""
         if self.session:
             await self.session.close()
             self.session = None
         logger.info("Gemini client closed")
-    
+
     def _handle_error(self, status: int, message: str) -> LLMError:
         """处理错误
         
@@ -140,8 +141,8 @@ class GeminiClient(BaseLLMClient):
             return APIConnectionError(f"Server error: {message}")
         else:
             return LLMError(f"Gemini error: {message}")
-    
-    def _convert_messages_to_gemini_format(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+    def _convert_messages_to_gemini_format(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """转换消息格式为 Gemini 格式
         
         Args:
@@ -152,19 +153,19 @@ class GeminiClient(BaseLLMClient):
         """
         contents = []
         system_instruction = None
-        
+
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content", "")
-            
+
             # 处理系统消息
             if role == "system":
                 system_instruction = {"parts": [{"text": content}]}
                 continue
-            
+
             # 转换角色
             gemini_role = "user" if role in ["user", "function"] else "model"
-            
+
             # 处理多模态内容
             if isinstance(content, list):
                 parts = []
@@ -180,7 +181,7 @@ class GeminiClient(BaseLLMClient):
                         else:
                             # URL 图片
                             parts.append({"file_data": {"file_uri": image_url}})
-                
+
                 contents.append({"role": gemini_role, "parts": parts})
             else:
                 # 纯文本
@@ -188,14 +189,14 @@ class GeminiClient(BaseLLMClient):
                     "role": gemini_role,
                     "parts": [{"text": content}]
                 })
-        
-        result: Dict[str, Any] = {"contents": contents}
+
+        result: dict[str, Any] = {"contents": contents}
         if system_instruction:
             result["system_instruction"] = system_instruction
-        
+
         return result
-    
-    def _parse_data_url(self, data_url: str) -> Dict[str, str]:
+
+    def _parse_data_url(self, data_url: str) -> dict[str, str]:
         """解析 data URL
         
         Args:
@@ -206,24 +207,24 @@ class GeminiClient(BaseLLMClient):
         """
         if not data_url.startswith("data:"):
             return {}
-        
+
         # 分割 data URL
         header, data = data_url.split(",", 1)
         mime_type = header.split(":")[1].split(";")[0]
-        
+
         return {
             "mime_type": mime_type,
             "data": data
         }
-    
+
     async def generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> LLMResponse:
         """生成文本
@@ -246,53 +247,53 @@ class GeminiClient(BaseLLMClient):
             raise RuntimeError("Failed to initialize aiohttp session")
         assert aiohttp is not None
         assert self.session is not None
-        
+
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_gemini_format(messages)
-            
+
             # 添加生成配置
-            generation_config: Dict[str, Any] = {
+            generation_config: dict[str, Any] = {
                 "temperature": temperature,
                 "topP": top_p
             }
-            
+
             if max_tokens:
                 generation_config["maxOutputTokens"] = max_tokens
-            
+
             if stop:
                 generation_config["stopSequences"] = stop
-            
+
             request_body["generationConfig"] = generation_config
-            
+
             # 添加其他参数
             if "safety_settings" in kwargs:
                 request_body["safetySettings"] = kwargs["safety_settings"]
-            
+
             logger.debug(f"Generating with model {model}")
-            
+
             # 调用 API
             url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
-            
+
             async with self.session.post(url, json=request_body) as response:
                 if response.status != 200:
                     error_data = await response.json()
                     error_msg = error_data.get("error", {}).get("message", "Unknown error")
                     raise self._handle_error(response.status, error_msg)
-                
+
                 data = await response.json()
-            
+
             # 解析响应
             candidates = data.get("candidates", [])
             if not candidates:
                 raise LLMError("No candidates in response")
-            
+
             candidate = candidates[0]
             content_parts = candidate.get("content", {}).get("parts", [])
-            
+
             # 提取文本内容
             content = "".join(part.get("text", "") for part in content_parts)
-            
+
             # 提取使用情况
             usage_metadata = data.get("usageMetadata", {})
             usage = {
@@ -300,7 +301,7 @@ class GeminiClient(BaseLLMClient):
                 "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
                 "total_tokens": usage_metadata.get("totalTokenCount", 0)
             }
-            
+
             result = LLMResponse(
                 content=content,
                 model=model,
@@ -308,10 +309,10 @@ class GeminiClient(BaseLLMClient):
                 usage=usage,
                 raw_response=data
             )
-            
+
             logger.debug(f"Generation completed: {result.usage}")
             return result
-            
+
         except aiohttp.ClientError as e:
             logger.error(f"Generation failed: {e}")
             raise APIConnectionError(f"Connection failed: {e}") from e
@@ -320,15 +321,15 @@ class GeminiClient(BaseLLMClient):
                 raise
             logger.error(f"Generation failed: {e}")
             raise LLMError(f"Gemini error: {e}") from e
-    
+
     async def stream_generate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs
     ) -> AsyncIterator[StreamChunk]:
         """流式生成文本
@@ -351,71 +352,71 @@ class GeminiClient(BaseLLMClient):
             raise RuntimeError("Failed to initialize aiohttp session")
         assert aiohttp is not None
         assert self.session is not None
-        
+
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_gemini_format(messages)
-            
+
             # 添加生成配置
-            generation_config: Dict[str, Any] = {
+            generation_config: dict[str, Any] = {
                 "temperature": temperature,
                 "topP": top_p
             }
-            
+
             if max_tokens:
                 generation_config["maxOutputTokens"] = max_tokens
-            
+
             if stop:
                 generation_config["stopSequences"] = stop
-            
+
             request_body["generationConfig"] = generation_config
-            
+
             # 添加其他参数
             if "safety_settings" in kwargs:
                 request_body["safetySettings"] = kwargs["safety_settings"]
-            
+
             logger.debug(f"Streaming generation with model {model}")
-            
+
             # 流式调用 API
             url = f"{self.base_url}/models/{model}:streamGenerateContent?key={self.api_key}"
-            
+
             async with self.session.post(url, json=request_body) as response:
                 if response.status != 200:
                     error_data = await response.json()
                     error_msg = error_data.get("error", {}).get("message", "Unknown error")
                     raise self._handle_error(response.status, error_msg)
-                
+
                 # 逐行读取流式响应
                 async for line in response.content:
                     if not line:
                         continue
-                    
+
                     # 解析 JSON
                     try:
                         chunk_data = json.loads(line)
                         candidates = chunk_data.get("candidates", [])
-                        
+
                         if not candidates:
                             continue
-                        
+
                         candidate = candidates[0]
                         content_parts = candidate.get("content", {}).get("parts", [])
-                        
+
                         # 提取文本内容
                         content = "".join(part.get("text", "") for part in content_parts)
-                        
+
                         if content:
                             yield StreamChunk(
                                 content=content,
                                 model=model,
                                 finish_reason=candidate.get("finishReason")
                             )
-                    
+
                     except json.JSONDecodeError:
                         continue
-            
+
             logger.debug("Streaming generation completed")
-            
+
         except aiohttp.ClientError as e:
             logger.error(f"Streaming generation failed: {e}")
             raise APIConnectionError(f"Connection failed: {e}") from e
@@ -424,13 +425,13 @@ class GeminiClient(BaseLLMClient):
                 raise
             logger.error(f"Streaming generation failed: {e}")
             raise LLMError(f"Gemini error: {e}") from e
-    
+
     async def generate_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         model: str,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
+        tool_choice: str | dict[str, Any] | None = "auto",
         **kwargs
     ) -> LLMResponse:
         """使用工具调用生成
@@ -451,11 +452,11 @@ class GeminiClient(BaseLLMClient):
             raise RuntimeError("Failed to initialize aiohttp session")
         assert aiohttp is not None
         assert self.session is not None
-        
+
         try:
             # 转换消息格式
             request_body = self._convert_messages_to_gemini_format(messages)
-            
+
             # 转换工具格式
             gemini_tools = []
             for tool in tools:
@@ -468,34 +469,34 @@ class GeminiClient(BaseLLMClient):
                             "parameters": func.get("parameters")
                         }]
                     })
-            
+
             request_body["tools"] = gemini_tools
-            
+
             logger.debug(f"Generating with tools, model {model}")
-            
+
             # 调用 API
             url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
-            
+
             async with self.session.post(url, json=request_body) as response:
                 if response.status != 200:
                     error_data = await response.json()
                     error_msg = error_data.get("error", {}).get("message", "Unknown error")
                     raise self._handle_error(response.status, error_msg)
-                
+
                 data = await response.json()
-            
+
             # 解析响应
             candidates = data.get("candidates", [])
             if not candidates:
                 raise LLMError("No candidates in response")
-            
+
             candidate = candidates[0]
             content_parts = candidate.get("content", {}).get("parts", [])
-            
+
             # 提取文本和函数调用
             content = ""
             tool_calls = []
-            
+
             for part in content_parts:
                 if "text" in part:
                     content += part["text"]
@@ -509,7 +510,7 @@ class GeminiClient(BaseLLMClient):
                             "arguments": json.dumps(func_call.get("args", {}))
                         }
                     })
-            
+
             # 提取使用情况
             usage_metadata = data.get("usageMetadata", {})
             usage = {
@@ -517,7 +518,7 @@ class GeminiClient(BaseLLMClient):
                 "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
                 "total_tokens": usage_metadata.get("totalTokenCount", 0)
             }
-            
+
             result = LLMResponse(
                 content=content,
                 model=model,
@@ -526,10 +527,10 @@ class GeminiClient(BaseLLMClient):
                 usage=usage,
                 raw_response=data
             )
-            
+
             logger.debug(f"Tool calling completed: {len(tool_calls)} calls")
             return result
-            
+
         except aiohttp.ClientError as e:
             logger.error(f"Tool calling failed: {e}")
             raise APIConnectionError(f"Connection failed: {e}") from e
@@ -538,13 +539,13 @@ class GeminiClient(BaseLLMClient):
                 raise
             logger.error(f"Tool calling failed: {e}")
             raise LLMError(f"Gemini error: {e}") from e
-    
+
     async def create_embeddings(
         self,
-        texts: List[str],
+        texts: list[str],
         model: str = "embedding-001",
         **kwargs
-    ) -> List[List[float]]:
+    ) -> list[list[float]]:
         """创建文本嵌入
         
         Args:
@@ -561,12 +562,12 @@ class GeminiClient(BaseLLMClient):
             raise RuntimeError("Failed to initialize aiohttp session")
         assert aiohttp is not None
         assert self.session is not None
-        
+
         try:
             logger.debug(f"Creating embeddings for {len(texts)} texts")
-            
+
             embeddings = []
-            
+
             # Gemini 嵌入 API 每次处理一个文本
             for text in texts:
                 request_body = {
@@ -574,22 +575,22 @@ class GeminiClient(BaseLLMClient):
                         "parts": [{"text": text}]
                     }
                 }
-                
+
                 url = f"{self.base_url}/models/{model}:embedContent?key={self.api_key}"
-                
+
                 async with self.session.post(url, json=request_body) as response:
                     if response.status != 200:
                         error_data = await response.json()
                         error_msg = error_data.get("error", {}).get("message", "Unknown error")
                         raise self._handle_error(response.status, error_msg)
-                    
+
                     data = await response.json()
                     embedding = data.get("embedding", {}).get("values", [])
                     embeddings.append(embedding)
-            
+
             logger.debug(f"Embeddings created: {len(embeddings)} vectors")
             return embeddings
-            
+
         except aiohttp.ClientError as e:
             logger.error(f"Embeddings creation failed: {e}")
             raise APIConnectionError(f"Connection failed: {e}") from e
@@ -598,7 +599,7 @@ class GeminiClient(BaseLLMClient):
                 raise
             logger.error(f"Embeddings creation failed: {e}")
             raise LLMError(f"Gemini error: {e}") from e
-    
+
     async def get_model_info(self, model: str) -> ModelInfo:
         """获取模型信息
         
@@ -614,31 +615,31 @@ class GeminiClient(BaseLLMClient):
             raise RuntimeError("Failed to initialize aiohttp session")
         assert aiohttp is not None
         assert self.session is not None
-        
+
         try:
             url = f"{self.base_url}/models/{model}?key={self.api_key}"
-            
+
             async with self.session.get(url) as response:
                 if response.status != 200:
                     # 返回默认信息
                     return self._get_default_model_info(model)
-                
+
                 data = await response.json()
-            
+
             # 解析能力
             capabilities = {ModelCapability.CHAT}
             supported_methods = data.get("supportedGenerationMethods", [])
-            
+
             if "generateContent" in supported_methods:
                 capabilities.add(ModelCapability.CHAT)
-            
+
             if "embedContent" in supported_methods:
                 capabilities.add(ModelCapability.EMBEDDINGS)
-            
+
             # Gemini Pro Vision 支持视觉
             if "vision" in model.lower():
                 capabilities.add(ModelCapability.VISION)
-            
+
             return ModelInfo(
                 provider="gemini",
                 model=model,
@@ -648,21 +649,21 @@ class GeminiClient(BaseLLMClient):
                 supports_streaming=True,
                 metadata=data
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to get model info: {e}")
             return self._get_default_model_info(model)
-    
+
     def _get_default_model_info(self, model: str) -> ModelInfo:
         """获取默认模型信息"""
         capabilities = {ModelCapability.CHAT}
-        
+
         if "vision" in model.lower():
             capabilities.add(ModelCapability.VISION)
-        
+
         if "embedding" in model.lower():
             capabilities = {ModelCapability.EMBEDDINGS}
-        
+
         return ModelInfo(
             provider="gemini",
             model=model,

@@ -1,6 +1,6 @@
 """inkfox.video submodule type stubs"""
-from __future__ import annotations
-from typing import Any, Dict, List, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 class PyVideoFrame:
     frame_number: int
@@ -8,8 +8,8 @@ class PyVideoFrame:
     height: int
     def __init__(self, frame_number: int, width: int, height: int, data: bytes | bytearray | memoryview | list[int]): ...
     def get_data(self) -> bytes: ...
-    def calculate_difference(self, other: "PyVideoFrame") -> float: ...
-    def calculate_difference_simd(self, other: "PyVideoFrame", block_size: int | None = None) -> float: ...
+    def calculate_difference(self, other: PyVideoFrame) -> float: ...
+    def calculate_difference_simd(self, other: PyVideoFrame, block_size: int | None = None) -> float: ...
 
 class PyPerformanceResult:
     test_name: str
@@ -57,8 +57,8 @@ def extract_keyframes_from_video(
 def get_system_info() -> dict[str, Any]: ...
 
 __all__ = [
-    "PyVideoFrame",
     "PyPerformanceResult",
+    "PyVideoFrame",
     "VideoKeyframeExtractor",
     "extract_keyframes_from_video",
     "get_system_info",
