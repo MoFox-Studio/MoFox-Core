@@ -405,6 +405,125 @@ class PluginInfo:
 class RouterInfo(ComponentInfo):
     """路由组件信息"""
 
+    custom_route_path: str = ""  # 自定义路由前缀路径
+
     def __post_init__(self):
         super().__post_init__()
         self.component_type = ComponentType.ROUTER
+
+
+@dataclass
+class ServiceInfo(ComponentInfo):
+    """服务组件信息
+
+    服务组件提供插件间通信能力，允许插件将自身能力
+    暴露为可供其他插件调用的服务。
+    """
+
+    service_version: str = "1.0.0"  # 服务版本号
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.component_type = ComponentType.SERVICE
+
+
+# ==================================================================================
+# 组件签名系统
+# 基于 Neo-MoFox 的 ComponentSignature 设计，为每个组件提供全局唯一标识符。
+# 格式: plugin_name:component_type:component_name
+# ==================================================================================
+
+_SIGNATURE_SEPARATOR = ":"
+
+
+@dataclass(slots=True, frozen=True)
+class ComponentSignature:
+    """组件签名。
+
+    唯一标识一个已注册的插件组件。格式为 ``plugin:type:name``。
+
+    使用方式::
+
+        sig = build_signature("my_plugin", ComponentType.ACTION, "greet")
+        assert str(sig) == "my_plugin:action:greet"
+        assert sig.plugin_name == "my_plugin"
+        assert sig.component_type == ComponentType.ACTION
+    """
+
+    plugin_name: str
+    component_type: ComponentType
+    component_name: str
+
+    def __str__(self) -> str:
+        return _SIGNATURE_SEPARATOR.join([self.plugin_name, self.component_type.value, self.component_name])
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+
+def build_signature(plugin_name: str, component_type: ComponentType, component_name: str) -> str:
+    """构建组件签名字符串。
+
+    Args:
+        plugin_name: 插件名称。
+        component_type: 组件类型。
+        component_name: 组件名称。
+
+    Returns:
+        签名字符串，格式为 ``plugin_name:type:name``。
+
+    Raises:
+        ValueError: 任一参数为空时抛出。
+    """
+    if not plugin_name or not component_name:
+        raise ValueError("plugin_name 和 component_name 均不能为空。")
+    return _SIGNATURE_SEPARATOR.join([plugin_name, component_type.value, component_name])
+
+
+def parse_signature(signature: str) -> ComponentSignature:
+    """解析组件签名字符串。
+
+    Args:
+        signature: 签名字符串，格式为 ``plugin_name:type:name``。
+
+    Returns:
+        ComponentSignature 实例。
+
+    Raises:
+        ValueError: 签名格式不正确或组件类型无效时抛出。
+    """
+    parts = signature.split(_SIGNATURE_SEPARATOR)
+    if len(parts) != 3:
+        raise ValueError(
+            f"无效的签名格式: '{signature}'。"
+            f" 期望格式为 'plugin_name:component_type:component_name'。"
+        )
+
+    plugin_name, component_type_str, component_name = parts
+
+    try:
+        component_type = ComponentType(component_type_str.lower())
+    except ValueError:
+        valid_types = ", ".join(t.value for t in ComponentType)
+        raise ValueError(f"无效的组件类型: '{component_type_str}'。有效值为: {valid_types}") from None
+
+    return ComponentSignature(
+        plugin_name=plugin_name,
+        component_type=component_type,
+        component_name=component_name,
+    )
+
+
+def parse_signature_opt(signature: str) -> ComponentSignature | None:
+    """安全解析组件签名，失败时返回 None。
+
+    Args:
+        signature: 签名字符串。
+
+    Returns:
+        ComponentSignature 或 None。
+    """
+    try:
+        return parse_signature(signature)
+    except ValueError:
+        return None

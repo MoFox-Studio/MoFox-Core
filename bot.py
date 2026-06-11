@@ -156,7 +156,7 @@ class EULAManager:
         if eula_confirmed == "true":
             logger.debug("EULA已通过环境变量确认")
             # 分支警告提示
-            self._show_branch_warning()
+            EULAManager._show_branch_warning()
             return
 
         # 提示用户确认EULA
@@ -182,7 +182,7 @@ class EULAManager:
                 if eula_confirmed == "true":
                     confirm_logger.info("EULA确认成功，感谢您的同意")
                     # 分支警告提示
-                    self._show_branch_warning()
+                    EULAManager._show_branch_warning()
                     return
 
                 if attempts % 5 == 0:
